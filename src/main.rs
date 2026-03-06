@@ -20,6 +20,7 @@ fn main() -> AnyResult<()> {
     };
 
     let settings = AppOptions::from(cli);
+    settings.validate()?;
 
     match source {
         StreamSource::Stdin(mut stdin) => process(&mut stdin, &settings)?,
