@@ -8,6 +8,7 @@ pub struct AppOptions {
     pub select: Option<Vec<String>>,
     pub skip: Option<usize>,
     pub delimeter: String,
+    pub output_delimeter: String,
     pub json: bool,
 }
 
@@ -79,6 +80,7 @@ impl From<Cli> for AppOptions {
         let skip = cli.skip;
         let delimeter = cli.delimeter;
         let json = cli.json;
+        let output_delimeter = cli.output_delimeter;
 
         AppOptions {
             mapping,
@@ -86,6 +88,7 @@ impl From<Cli> for AppOptions {
             skip,
             delimeter,
             json,
+            output_delimeter,
         }
     }
 }

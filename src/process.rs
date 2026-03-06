@@ -43,7 +43,7 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
                 .into_iter()
                 .map(|(_, value)| value.to_string())
                 .collect::<Vec<_>>()
-                .join(&settings.delimeter);
+                .join(&settings.output_delimeter);
 
             println!("{}", output);
         }

@@ -17,6 +17,9 @@ pub struct Cli {
     #[clap(short, long, default_value = ",")]
     pub delimeter: String,
 
+    #[clap(short, long, default_value = ",", conflicts_with = "json")]
+    pub output_delimeter: String,
+
     #[clap(long)]
     pub json: bool,
 }
