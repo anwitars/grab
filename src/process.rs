@@ -20,6 +20,15 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         // split by the specified delimiter
         let fields: Vec<&str> = line.split(&settings.delimeter).collect();
 
+        if fields.len() != settings.mapping.len() {
+            return Err(format!(
+                "Field count mismatch: expected {}, got {}",
+                settings.mapping.len(),
+                fields.len()
+            )
+            .into());
+        }
+
         let selected_fields: Vec<_> = settings
             .mapping
             .iter()
