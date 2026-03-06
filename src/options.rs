@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use crate::{cli::Cli, types::AnyResult};
 
+/// Parsed and validated application options derived from command-line arguments.
 #[derive(Debug)]
 pub struct AppOptions {
     pub mapping: Vec<String>,
@@ -13,6 +14,7 @@ pub struct AppOptions {
 }
 
 impl AppOptions {
+    /// Validates the mapping options
     fn validate_mapping(&self) -> AnyResult<()> {
         if self.mapping.is_empty() {
             return Err("Mapping cannot be empty".into());
@@ -32,6 +34,7 @@ impl AppOptions {
         Ok(())
     }
 
+    /// Validates the select options
     fn validate_select(&self) -> AnyResult<()> {
         if let Some(ref select) = self.select {
             if select.is_empty() {
@@ -60,6 +63,7 @@ impl AppOptions {
         Ok(())
     }
 
+    /// Runs all validation checks on the options.
     pub fn validate(&self) -> AnyResult<()> {
         self.validate_mapping()?;
         self.validate_select()?;
