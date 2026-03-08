@@ -31,6 +31,10 @@ pub struct Cli {
     #[clap(short, long, default_value = ",", conflicts_with = "json")]
     pub output_delimeter: String,
 
+    /// Delimiter used to join fields for greedy mappings. Ignored if JSON output is enabled.
+    #[clap(long, default_value = ";", conflicts_with = "json")]
+    pub output_greedy_delimeter: String,
+
     /// Output results in JSON format instead of delimited text. Conflicts with output-delimiter option.
     #[clap(long)]
     pub json: bool,

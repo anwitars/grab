@@ -1,15 +1,61 @@
 use std::collections::HashSet;
+use std::str::FromStr;
 
 use crate::{cli::Cli, types::AnyResult};
+
+#[derive(Debug)]
+pub enum FieldMap {
+    Greedy { name: String },
+    Some { name: String, rowspan: usize },
+    One { name: String },
+}
+
+impl FieldMap {
+    pub fn name(&self) -> &str {
+        match self {
+            FieldMap::Greedy { name } | FieldMap::Some { name, .. } | FieldMap::One { name } => {
+                name
+            }
+        }
+    }
+}
+
+impl FromStr for FieldMap {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = value.split(':').collect();
+        match parts.len() {
+            1 => Ok(FieldMap::One {
+                name: parts[0].trim().to_string(),
+            }),
+            2 => {
+                let name = parts[0].trim().to_string();
+                let span_part = parts[1].trim();
+
+                if span_part == "g" {
+                    Ok(FieldMap::Greedy { name })
+                } else {
+                    let rowspan = span_part
+                        .parse::<usize>()
+                        .map_err(|e| format!("Invalid rowspan value '{}': {}", span_part, e))?;
+                    Ok(FieldMap::Some { name, rowspan })
+                }
+            }
+            _ => Err(format!("Invalid mapping format: '{}'", value)),
+        }
+    }
+}
 
 /// Parsed and validated application options derived from command-line arguments.
 #[derive(Debug)]
 pub struct AppOptions {
-    pub mapping: Vec<String>,
-    pub select: Option<Vec<String>>,
+    pub mapping: Vec<FieldMap>,
+    pub select: Option<HashSet<String>>,
     pub skip: Option<usize>,
     pub delimeter: String,
     pub output_delimeter: String,
+    pub output_greedy_delimeter: String,
     pub json: bool,
 }
 
@@ -20,14 +66,38 @@ impl AppOptions {
             return Err("Mapping cannot be empty".into());
         }
 
-        if self.mapping.iter().any(|m| m.trim().is_empty()) {
-            return Err("Mapping cannot contain empty fields".into());
-        }
-
         let mut seen = HashSet::new();
-        for m in &self.mapping {
-            if !seen.insert(m) {
-                return Err(format!("Duplicate field in mapping: {}", m).into());
+        for (i, m) in self.mapping.iter().enumerate() {
+            let name = m.name();
+
+            if name.is_empty() {
+                return Err(format!("Mapping field name cannot be empty at position {}", i).into());
+            }
+
+            if !seen.insert(name) {
+                return Err(format!("Duplicate field in mapping: {}", name).into());
+            }
+
+            match m {
+                FieldMap::Some { rowspan, .. } => {
+                    if *rowspan == 0 {
+                        return Err(format!(
+                            "Rowspan must be greater than 0 in mapping at position {}",
+                            i
+                        )
+                        .into());
+                    }
+                }
+                FieldMap::Greedy { .. } => {
+                    if i != self.mapping.len() - 1 {
+                        return Err(format!(
+                            "Greedy field must be the last in the mapping, found at position {}",
+                            i
+                        )
+                        .into());
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -45,9 +115,10 @@ impl AppOptions {
                 return Err("Select cannot contain empty fields".into());
             }
 
-            let mapping_set: HashSet<_> = self.mapping.iter().collect();
+            let mapping_set: HashSet<_> = self.mapping.iter().map(|m| m.name()).collect();
+
             for s in select {
-                if !mapping_set.contains(s) {
+                if !mapping_set.contains(s.as_str()) {
                     return Err(format!("Select field '{}' not found in mapping", s).into());
                 }
             }
@@ -71,28 +142,34 @@ impl AppOptions {
     }
 }
 
-impl From<Cli> for AppOptions {
-    fn from(cli: Cli) -> Self {
+impl TryFrom<Cli> for AppOptions {
+    type Error = String;
+
+    fn try_from(cli: Cli) -> Result<Self, Self::Error> {
         let mapping = cli
             .mapping
             .split(',')
-            .map(|s| s.trim().to_string())
-            .collect();
+            .map(|s| s.parse())
+            .collect::<Result<Vec<_>, _>>()?;
+
         let select = cli
             .select
             .map(|s| s.split(',').map(|s| s.trim().to_string()).collect());
+
         let skip = cli.skip;
         let delimeter = cli.delimeter;
         let json = cli.json;
         let output_delimeter = cli.output_delimeter;
+        let output_greedy_delimeter = cli.output_greedy_delimeter;
 
-        AppOptions {
+        Ok(AppOptions {
             mapping,
             select,
             skip,
             delimeter,
             json,
             output_delimeter,
-        }
+            output_greedy_delimeter,
+        })
     }
 }

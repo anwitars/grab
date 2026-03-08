@@ -19,7 +19,7 @@ fn main() -> AnyResult<()> {
         StreamSource::Stdin(std::io::stdin().lock())
     };
 
-    let settings = AppOptions::from(cli);
+    let settings = AppOptions::try_from(cli)?;
     settings.validate()?;
 
     match source {
