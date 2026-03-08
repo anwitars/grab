@@ -81,7 +81,7 @@ impl AppOptions {
                 return Err(format!("Mapping field name cannot be empty at position {}", i).into());
             }
 
-            if !seen.insert(name) {
+            if name != "_" && !seen.insert(name) {
                 return Err(format!("Duplicate field in mapping: {}", name).into());
             }
 
@@ -122,9 +122,19 @@ impl AppOptions {
                 return Err("Select cannot contain empty fields".into());
             }
 
-            let mapping_set: HashSet<_> = self.mapping.iter().map(|m| m.name()).collect();
+            let mapping_set: HashSet<_> = self
+                .mapping
+                .iter()
+                .map(|m| m.name())
+                .filter(|name| name != &"_")
+                .collect();
 
             for s in select {
+                if s == "_" {
+                    return Err(
+                        "Select cannot contain '_' as it is reserved for unmapped fields".into(),
+                    );
+                }
                 if !mapping_set.contains(s.as_str()) {
                     return Err(format!("Select field '{}' not found in mapping", s).into());
                 }
