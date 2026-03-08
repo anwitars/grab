@@ -3,10 +3,16 @@ use std::str::FromStr;
 
 use crate::{cli::Cli, types::AnyResult};
 
+/// Defines the user's intent for how to map input fields to output fields,
+/// including support for greedy and multi-field mappings.
 #[derive(Debug)]
 pub enum FieldMap {
+    /// Maps all remaining input fields to a single output field, joining them with the greedy delimiter.
+    /// Can only be used as the last mapping in the list.
     Greedy { name: String },
+    /// Maps multiple input fields to a single output field, with a specified colspan.
     Some { name: String, colspan: usize },
+    /// Maps a single input field to an output field.
     One { name: String },
 }
 

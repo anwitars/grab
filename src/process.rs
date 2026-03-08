@@ -21,6 +21,8 @@ enum SelectedField {
 
 /// Processes the input line by line according to the provided settings and outputs the results.
 pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<()> {
+    // determine the set of field names to include in the output based on the select option if the user defined it,
+    // otherwise include all fields defined in the mapping.
     let selected_field_names: HashSet<&str> = settings
         .select
         .as_ref()
@@ -37,6 +39,8 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         // split by the specified delimiter
         let fields: Vec<&str> = line.split(&settings.delimiter).collect();
 
+        // for now, we always validate the number of fields against the mapping if the mapping is not greedy
+        // TODO: implement --strict option to control this behavior
         let mapping_count = mapping_columns_count(&settings.mapping);
         if let Some(count) = mapping_count {
             let fields_count = fields.len();
@@ -48,13 +52,19 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
             }
         }
 
+        // let's use an iterator to process the fields according to the mapping, and consume columns as we go
         let mut fields_iterator = fields.into_iter();
+
+        // the final output fields that will be displayed
         let mut selected_fields: Vec<(String, SelectedField)> = Vec::new();
 
+        // FIXME: even this this match works as expected, it is hard to read and has redundant code
         for mapping in &settings.mapping {
             match mapping {
                 FieldMap::One { name } => {
                     if let Some(field) = fields_iterator.next() {
+                        // we have to do this check for each field and fieldmap type, because this column might
+                        // not make it into the output
                         if selected_field_names.contains(name.as_str()) {
                             selected_fields
                                 .push((name.clone(), SelectedField::One(field.to_string())));
@@ -91,12 +101,17 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
                     if selected_field_names.contains(name.as_str()) {
                         selected_fields.push((name.clone(), SelectedField::Some(remaining_fields)));
                     }
-                    break; // Greedy consumes all remaining fields, so we can stop processing mappings
+
+                    // since greedy consumes all remaining fields, and ".map()" will exhaust the iterator,
+                    // we have to do this explicitly to satisfy the borrow checker
+                    break;
                 }
             }
         }
 
         if settings.json {
+            // construct the json object for the selected fields
+            // colspan and greedy fields will be represented as arrays
             let json_object: serde_json::Map<String, serde_json::Value> = selected_fields
                 .into_iter()
                 .map(|(name, field)| {
@@ -113,6 +128,8 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
             let json_string = serde_json::to_string(&json_object)?;
             println!("{}", json_string);
         } else {
+            // colspan and greedy fields will be joined by the output_greedy_delimiter,
+            // and then all fields will be joined by the output_delimiter
             let output_fields: Vec<String> = selected_fields
                 .into_iter()
                 .map(|(_, field)| match field {
@@ -128,6 +145,7 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
     Ok(())
 }
 
+/// Calculates the total number of columns that the mapping will consume, if it is not greedy.
 fn mapping_columns_count(mappings: &[FieldMap]) -> Option<usize> {
     let mut count = 0;
     for mapping in mappings {
