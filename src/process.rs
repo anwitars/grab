@@ -66,9 +66,9 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
                         ))?;
                     }
                 }
-                FieldMap::Some { name, rowspan } => {
+                FieldMap::Some { name, colspan } => {
                     let mut values = Vec::new();
-                    for _ in 0..*rowspan {
+                    for _ in 0..*colspan {
                         if let Some(field) = fields_iterator.next() {
                             if selected_field_names.contains(name.as_str()) {
                                 values.push(field.to_string());
@@ -133,7 +133,7 @@ fn mapping_columns_count(mappings: &[FieldMap]) -> Option<usize> {
     for mapping in mappings {
         match mapping {
             FieldMap::One { .. } => count += 1,
-            FieldMap::Some { rowspan, .. } => count += *rowspan,
+            FieldMap::Some { colspan, .. } => count += *colspan,
             FieldMap::Greedy { .. } => return None, // Greedy can consume any number of columns
         }
     }

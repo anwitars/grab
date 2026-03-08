@@ -6,7 +6,7 @@ use crate::{cli::Cli, types::AnyResult};
 #[derive(Debug)]
 pub enum FieldMap {
     Greedy { name: String },
-    Some { name: String, rowspan: usize },
+    Some { name: String, colspan: usize },
     One { name: String },
 }
 
@@ -36,10 +36,10 @@ impl FromStr for FieldMap {
                 if span_part == "g" {
                     Ok(FieldMap::Greedy { name })
                 } else {
-                    let rowspan = span_part
+                    let colspan = span_part
                         .parse::<usize>()
-                        .map_err(|e| format!("Invalid rowspan value '{}': {}", span_part, e))?;
-                    Ok(FieldMap::Some { name, rowspan })
+                        .map_err(|e| format!("Invalid colspan value '{}': {}", span_part, e))?;
+                    Ok(FieldMap::Some { name, colspan })
                 }
             }
             _ => Err(format!("Invalid mapping format: '{}'", value)),
@@ -79,10 +79,10 @@ impl AppOptions {
             }
 
             match m {
-                FieldMap::Some { rowspan, .. } => {
-                    if *rowspan == 0 {
+                FieldMap::Some { colspan, .. } => {
+                    if *colspan == 0 {
                         return Err(format!(
-                            "Rowspan must be greater than 0 in mapping at position {}",
+                            "Colspan must be greater than 0 in mapping at position {}",
                             i
                         )
                         .into());
