@@ -11,7 +11,26 @@ pub struct Cli {
     /// Input file to read from. If not provided, reads from standard input.
     pub file: Option<PathBuf>,
 
-    /// Comma-separated list of field names corresponding to the input columns. Required.
+    /// Comma-separated list of field names corresponding to the input columns.
+    /// Names must be unique and match the expected field count of the input data unless --loose is enabled.
+    ///
+    /// A simple mapping example: "name,age,city" means
+    /// the first column is "name", the second is "age", and the third is "city".
+    ///
+    /// Colspan can be used to combine multiple input columns into a single output field.
+    /// For example: "name,age,address:2" means "name" is the first column, "age" is the second, and "address"
+    /// combines the third and fourth columns into one field using the output-greedy-delimiter.
+    /// Example output: "John,30,123 Main St;Apt 4B" if the input was "John,30,123 Main St,Apt 4B".
+    ///
+    /// Greedy flag can be used to indicate that a field should consume all remaining input columns.
+    /// For example: "name,age,rest:g" means "name" is the first column, "age" is the second,
+    /// and "rest" consumes all remaining columns.
+    /// Example output: "John,30,Extra1;Extra2;Extra3" if the input was "John,30,Extra1,Extra2,Extra3".
+    ///
+    /// '_' can be used as a placeholder for fields that should be ignored. For example, "name,age,_,city"
+    /// means the third column is ignored and not included in the output.
+    /// Can be combined with colspan and greedy.
+    /// Example output: "John,30,New York" if the input was "John,30,ignored,New York".
     #[clap(short, long)]
     pub mapping: String,
 
