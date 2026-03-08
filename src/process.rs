@@ -108,11 +108,15 @@ pub fn process<R: Read, W: Write>(
         .mapping
         .iter()
         .map(|mapping| {
-            let is_selected = settings
-                .select
-                .as_ref()
-                .map(|s| s.contains(mapping.name()))
-                .unwrap_or(true);
+            let is_selected = if mapping.is_placeholder() {
+                false
+            } else {
+                settings
+                    .select
+                    .as_ref()
+                    .map(|s| s.contains(mapping.name()))
+                    .unwrap_or(true)
+            };
 
             (mapping, is_selected)
         })
