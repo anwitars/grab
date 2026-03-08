@@ -3,6 +3,7 @@ use crate::{
     types::AnyResult,
 };
 use std::{
+    borrow::Cow,
     collections::HashSet,
     io::{BufRead, BufReader, BufWriter, Write},
 };
@@ -14,9 +15,9 @@ pub enum StreamSource {
     File(BufReader<std::fs::File>),
 }
 
-enum SelectedField {
-    One(String),
-    Some(Vec<String>),
+enum SelectedField<'a> {
+    One(&'a str),
+    Some(Vec<&'a str>),
 }
 
 /// Processes the input line by line according to the provided settings and outputs the results.
@@ -60,7 +61,7 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         let mut fields_iterator = fields.into_iter();
 
         // the final output fields that will be displayed
-        let mut selected_fields: Vec<(String, SelectedField)> = Vec::new();
+        let mut selected_fields: Vec<(&str, SelectedField)> = Vec::new();
 
         // FIXME: even this this match works as expected, it is hard to read and has redundant code
         for mapping in &settings.mapping {
@@ -70,8 +71,7 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
                         // we have to do this check for each field and fieldmap type, because this column might
                         // not make it into the output
                         if selected_field_names.contains(name.as_str()) {
-                            selected_fields
-                                .push((name.clone(), SelectedField::One(field.to_string())));
+                            selected_fields.push((name.as_str(), SelectedField::One(field)));
                         }
                     } else {
                         return Err(format!(
@@ -85,7 +85,7 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
                     for _ in 0..*colspan {
                         if let Some(field) = fields_iterator.next() {
                             if selected_field_names.contains(name.as_str()) {
-                                values.push(field.to_string());
+                                values.push(field);
                             }
                         } else {
                             return Err(format!(
@@ -95,15 +95,15 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
                         }
                     }
                     if !values.is_empty() {
-                        selected_fields.push((name.clone(), SelectedField::Some(values)));
+                        selected_fields.push((name.as_str(), SelectedField::Some(values)));
                     }
                 }
                 FieldMap::Greedy { name } => {
-                    let remaining_fields: Vec<String> =
-                        fields_iterator.map(|f| f.to_string()).collect();
+                    let remaining_fields: Vec<&str> = fields_iterator.collect();
 
                     if selected_field_names.contains(name.as_str()) {
-                        selected_fields.push((name.clone(), SelectedField::Some(remaining_fields)));
+                        selected_fields
+                            .push((name.as_str(), SelectedField::Some(remaining_fields)));
                     }
 
                     // since greedy consumes all remaining fields, and ".map()" will exhaust the iterator,
@@ -119,11 +119,13 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         } else {
             // colspan and greedy fields will be joined by the output_greedy_delimiter,
             // and then all fields will be joined by the output_delimiter
-            let output_fields: Vec<String> = selected_fields
+            let output_fields: Vec<Cow<'_, str>> = selected_fields
                 .into_iter()
                 .map(|(_, field)| match field {
-                    SelectedField::One(val) => val,
-                    SelectedField::Some(vals) => vals.join(&settings.output_greedy_delimiter),
+                    SelectedField::One(val) => Cow::Borrowed(val),
+                    SelectedField::Some(vals) => {
+                        Cow::Owned(vals.join(&settings.output_greedy_delimiter))
+                    }
                 })
                 .collect();
 
@@ -150,7 +152,7 @@ fn mapping_columns_count(mappings: &[FieldMap]) -> Option<usize> {
 
 fn serialize_json_object(
     writer: &mut impl Write,
-    fields: &[(String, SelectedField)],
+    fields: &[(&str, SelectedField)],
 ) -> AnyResult<()> {
     writer.write_all(b"{")?;
 
