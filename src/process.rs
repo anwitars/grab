@@ -42,7 +42,9 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         .take(settings.take.unwrap_or(usize::MAX))
     {
         // split by the specified delimiter
-        let fields: Vec<&str> = line.split(&settings.delimiter).collect();
+        // FIXME: as moved to memchr, it only operates on the first byte of the delimiter
+        let fields: Vec<&str> =
+            split_by_delimiter(&line, *settings.delimiter.as_bytes().first().unwrap()).collect();
 
         // for now, we always validate the number of fields against the mapping if the mapping is not greedy
         // TODO: implement --strict option to control this behavior
@@ -188,4 +190,23 @@ fn serialize_json_object(
     writer.write_all(b"}")?;
 
     Ok(())
+}
+
+fn split_by_delimiter<'a>(line: &'a str, delimiter: u8) -> impl Iterator<Item = &'a str> + 'a {
+    let mut start = 0;
+
+    std::iter::from_fn(move || {
+        if start > line.len() {
+            return None;
+        }
+
+        let end = match memchr::memchr(delimiter, &line.as_bytes()[start..]) {
+            Some(pos) => start + pos,
+            None => line.len(),
+        };
+
+        let slice = &line[start..end];
+        start = end + 1; // Move past the delimiter for the next iteration
+        Some(slice)
+    })
 }
