@@ -3,7 +3,7 @@ use crate::process::{StreamSource, process};
 use crate::types::AnyResult;
 use clap::Parser;
 use cli::Cli;
-use std::io::BufReader;
+use std::io::{BufReader, BufWriter};
 
 mod cli;
 mod error;
@@ -24,9 +24,10 @@ fn main() -> AnyResult<()> {
     let settings = AppOptions::try_from(cli)?;
     settings.validate()?;
 
+    let mut writer = BufWriter::new(std::io::stdout());
     match source {
-        StreamSource::Stdin(mut stdin) => process(&mut stdin, &settings)?,
-        StreamSource::File(mut file) => process(&mut file, &settings)?,
+        StreamSource::Stdin(mut stdin) => process(&mut stdin, &mut writer, &settings)?,
+        StreamSource::File(mut file) => process(&mut file, &mut writer, &settings)?,
     }
 
     Ok(())

@@ -3,12 +3,12 @@ use crate::{
     try_report,
     types::AnyResult,
 };
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufReader, Read, StdinLock, Write};
 
 /// Represents the source of the input stream, either from standard input or a file.
 #[derive(Debug)]
 pub enum StreamSource {
-    Stdin(std::io::StdinLock<'static>),
+    Stdin(StdinLock<'static>),
     File(BufReader<std::fs::File>),
 }
 
@@ -99,9 +99,11 @@ impl<'a> FieldWriter<'a> for FieldMap {
 }
 
 /// Processes the input line by line according to the provided settings and outputs the results.
-pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<()> {
-    let mut writer = BufWriter::new(std::io::stdout());
-
+pub fn process<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    settings: &AppOptions,
+) -> AnyResult<()> {
     let mappings: Vec<_> = settings
         .mapping
         .iter()
@@ -138,53 +140,57 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
     {
         let line_number = line_number + 1; // Line numbers are 1-based for user-friendly error reporting
         let line_number = line_number + settings.skip.unwrap_or(0); // Adjust line number based on skipped lines
-
         let record = try_report!(record, line_number);
-        let fields = record.into_iter();
-
-        if !settings.loose {
-            try_report!(
-                check_columns_count(&settings.mapping, record.len()),
-                line_number
-            )
-        }
-
-        if settings.json {
-            try_report!(writer.write_all(b"{"), line_number);
-        }
-
-        // let's use an iterator to process the fields according to the mapping, and consume columns as we go
-        let mut fields_iterator = fields.into_iter();
-        let mut is_first = true;
-
-        for (mapping, is_selected) in mappings.iter() {
-            if *is_selected {
-                if !is_first {
-                    if settings.json {
-                        try_report!(writer.write_all(b","), line_number);
-                    } else {
-                        try_report!(
-                            writer.write_all(settings.output_delimiter.as_bytes()),
-                            line_number
-                        );
-                    }
-                }
-                is_first = false;
-
-                try_report!(
-                    mapping.write_field(&mut writer, &settings, fields_iterator.by_ref()),
-                    line_number
-                );
-            } else {
-                mapping.consume_fields(fields_iterator.by_ref());
-            }
-        }
-
-        if settings.json {
-            try_report!(writer.write_all(b"}"), line_number);
-        }
-        try_report!(writer.write_all(b"\n"), line_number);
+        try_report!(
+            process_record(record, writer, settings, &mappings),
+            line_number
+        );
     }
+
+    Ok(())
+}
+
+fn process_record(
+    record: csv::StringRecord,
+    writer: &mut impl Write,
+    settings: &AppOptions,
+    mappings: &[(&FieldMap, bool)],
+) -> AnyResult<()> {
+    let fields = record.into_iter();
+
+    if !settings.loose {
+        check_columns_count(&settings.mapping, record.len())?;
+    }
+
+    if settings.json {
+        writer.write_all(b"{")?;
+    }
+
+    // let's use an iterator to process the fields according to the mapping, and consume columns as we go
+    let mut fields_iterator = fields.into_iter();
+    let mut is_first = true;
+
+    for (mapping, is_selected) in mappings.iter() {
+        if *is_selected {
+            if !is_first {
+                if settings.json {
+                    writer.write_all(b",")?;
+                } else {
+                    writer.write_all(settings.output_delimiter.as_bytes())?;
+                }
+            }
+            is_first = false;
+
+            mapping.write_field(writer, &settings, fields_iterator.by_ref())?;
+        } else {
+            mapping.consume_fields(fields_iterator.by_ref());
+        }
+    }
+
+    if settings.json {
+        writer.write_all(b"}")?;
+    }
+    writer.write_all(b"\n")?;
 
     Ok(())
 }
