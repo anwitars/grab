@@ -33,6 +33,8 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         .lines()
         // skip the specified number of lines if the skip option is set
         .skip(settings.skip.unwrap_or(0))
+        // take only the specified number of lines if the take option is set
+        .take(settings.take.unwrap_or(usize::MAX))
         // filter out lines that cannot be read
         .filter_map(Result::ok)
     {

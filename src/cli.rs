@@ -23,6 +23,10 @@ pub struct Cli {
     #[clap(long)]
     pub skip: Option<usize>,
 
+    /// Number of lines to process after skipping. If not provided, processes all remaining lines.
+    #[clap(long)]
+    pub take: Option<usize>,
+
     /// Delimiter used to split the input fields.
     #[clap(short, long, default_value = ",")]
     pub delimiter: String,
