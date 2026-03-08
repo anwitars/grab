@@ -6,6 +6,7 @@ use cli::Cli;
 use std::io::BufReader;
 
 mod cli;
+mod error;
 mod options;
 mod process;
 mod types;

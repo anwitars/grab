@@ -1,5 +1,7 @@
 use crate::{
+    error::report_error,
     options::{AppOptions, FieldMap},
+    try_report,
     types::AnyResult,
 };
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -114,7 +116,7 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         })
         .collect();
 
-    for line in reader
+    for (line_number, line) in reader
         .lines()
         // filter out lines that cannot be read
         .filter_map(Result::ok)
@@ -122,10 +124,19 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         .skip(settings.skip.unwrap_or(0))
         // take only the specified number of lines if the take option is set
         .take(settings.take.unwrap_or(usize::MAX))
+        .enumerate()
     {
+        let line_number = line_number + 1; // Line numbers are 1-based for user-friendly error reporting
+        let line_number = line_number + settings.skip.unwrap_or(0); // Adjust line number based on skipped lines
+
         // split by the specified delimiter
         // FIXME: as moved to memchr, it only operates on the first byte of the delimiter
-        let fields = split_by_delimiter(&line, *settings.delimiter.as_bytes().first().unwrap());
+        let delimiter_byte = settings
+            .delimiter
+            .as_bytes()
+            .first()
+            .ok_or("Delimiter cannot be empty")?;
+        let fields = split_by_delimiter(&line, *delimiter_byte);
 
         // for now, we always validate the number of fields against the mapping if the mapping is not greedy
         // TODO: implement --strict option to control this behavior
@@ -136,15 +147,19 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
                 fields_count += 1;
             }
             if fields_count != count {
-                return Err(format!(
-                    "Expected {} fields based on mapping, but got {}: '{}'",
-                    count, fields_count, line
-                ))?;
+                report_error(
+                    format!(
+                        "Expected {} fields based on the mapping, but got {}",
+                        count, fields_count
+                    ),
+                    line_number,
+                );
+                continue;
             }
         }
 
         if settings.json {
-            writer.write_all(b"{")?;
+            try_report!(writer.write_all(b"{"), line_number);
         }
 
         // let's use an iterator to process the fields according to the mapping, and consume columns as we go
@@ -155,23 +170,29 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
             if *is_selected {
                 if !is_first {
                     if settings.json {
-                        writer.write_all(b",")?;
+                        try_report!(writer.write_all(b","), line_number);
                     } else {
-                        writer.write_all(settings.output_delimiter.as_bytes())?;
+                        try_report!(
+                            writer.write_all(settings.output_delimiter.as_bytes()),
+                            line_number
+                        );
                     }
                 }
                 is_first = false;
 
-                mapping.write_field(&mut writer, &settings, fields_iterator.by_ref())?;
+                try_report!(
+                    mapping.write_field(&mut writer, &settings, fields_iterator.by_ref()),
+                    line_number
+                );
             } else {
                 mapping.consume_fields(fields_iterator.by_ref());
             }
         }
 
         if settings.json {
-            writer.write_all(b"}")?;
+            try_report!(writer.write_all(b"}"), line_number);
         }
-        writer.write_all(b"\n")?;
+        try_report!(writer.write_all(b"\n"), line_number);
     }
 
     Ok(())
