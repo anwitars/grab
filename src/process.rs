@@ -4,7 +4,7 @@ use crate::{
 };
 use std::{
     collections::HashSet,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, BufWriter, Write},
 };
 
 /// Represents the source of the input stream, either from standard input or a file.
@@ -21,6 +21,8 @@ enum SelectedField {
 
 /// Processes the input line by line according to the provided settings and outputs the results.
 pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<()> {
+    let mut writer = BufWriter::new(std::io::stdout());
+
     // determine the set of field names to include in the output based on the select option if the user defined it,
     // otherwise include all fields defined in the mapping.
     let selected_field_names: HashSet<&str> = settings
@@ -112,23 +114,8 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         }
 
         if settings.json {
-            // construct the json object for the selected fields
-            // colspan and greedy fields will be represented as arrays
-            let json_object: serde_json::Map<String, serde_json::Value> = selected_fields
-                .into_iter()
-                .map(|(name, field)| {
-                    let value = match field {
-                        SelectedField::One(val) => serde_json::Value::String(val),
-                        SelectedField::Some(vals) => serde_json::Value::Array(
-                            vals.into_iter().map(serde_json::Value::String).collect(),
-                        ),
-                    };
-                    (name, value)
-                })
-                .collect();
-
-            let json_string = serde_json::to_string(&json_object)?;
-            println!("{}", json_string);
+            serialize_json_object(&mut writer, &selected_fields)?;
+            writer.write_all(b"\n")?;
         } else {
             // colspan and greedy fields will be joined by the output_greedy_delimiter,
             // and then all fields will be joined by the output_delimiter
@@ -140,7 +127,8 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
                 })
                 .collect();
 
-            println!("{}", output_fields.join(&settings.output_delimiter));
+            writer.write_all(output_fields.join(&settings.output_delimiter).as_bytes())?;
+            writer.write_all(b"\n")?;
         }
     }
 
@@ -158,4 +146,44 @@ fn mapping_columns_count(mappings: &[FieldMap]) -> Option<usize> {
         }
     }
     Some(count)
+}
+
+fn serialize_json_object(
+    writer: &mut impl Write,
+    fields: &[(String, SelectedField)],
+) -> AnyResult<()> {
+    writer.write_all(b"{")?;
+
+    for (i, (name, value)) in fields.iter().enumerate() {
+        if i > 0 {
+            writer.write_all(b", ")?;
+        }
+
+        writer.write_all(b"\"")?;
+        writer.write_all(name.as_bytes())?;
+        writer.write_all(b"\": ")?;
+
+        match value {
+            SelectedField::One(value) => {
+                writer.write_all(b"\"")?;
+                writer.write_all(value.as_bytes())?;
+                writer.write_all(b"\"")?;
+            }
+            SelectedField::Some(values) => {
+                writer.write_all(b"[")?;
+                for (j, val) in values.iter().enumerate() {
+                    if j > 0 {
+                        writer.write_all(b", ")?;
+                    }
+                    writer.write_all(b"\"")?;
+                    writer.write_all(val.as_bytes())?;
+                    writer.write_all(b"\"")?;
+                }
+                writer.write_all(b"]")?;
+            }
+        }
+    }
+    writer.write_all(b"}")?;
+
+    Ok(())
 }
