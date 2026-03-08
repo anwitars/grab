@@ -2,10 +2,7 @@ use crate::{
     options::{AppOptions, FieldMap},
     types::AnyResult,
 };
-use std::{
-    collections::HashSet,
-    io::{BufRead, BufReader},
-};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 
 /// Represents the source of the input stream, either from standard input or a file.
 #[derive(Debug)]
@@ -14,20 +11,108 @@ pub enum StreamSource {
     File(BufReader<std::fs::File>),
 }
 
-enum SelectedField {
-    One(String),
-    Some(Vec<String>),
+/// A trait that defines how to write fields to the output based on the mapping configuration.
+trait FieldWriter<'a> {
+    /// Writes the specified fields to the output according to the provided settings.
+    /// Only called when the field is selected for output.
+    fn write_field(
+        &self,
+        writer: &mut impl Write,
+        app_options: &AppOptions,
+        fields: &mut impl Iterator<Item = &'a str>,
+    ) -> AnyResult<()>;
+
+    /// Consumes the specified number of fields from the input iterator, effectively skipping them.
+    /// Only called when the field is not selected for output.
+    fn consume_fields(&self, fields: &mut impl Iterator<Item = &'a str>);
+}
+
+impl<'a> FieldWriter<'a> for FieldMap {
+    fn write_field(
+        &self,
+        writer: &mut impl Write,
+        app_options: &AppOptions,
+        fields: &mut impl Iterator<Item = &'a str>,
+    ) -> AnyResult<()> {
+        let is_json = app_options.json;
+
+        match self {
+            FieldMap::One { name } => {
+                let value = fields.next().ok_or_else(|| {
+                    format!("Expected more fields for mapping '{}', but got fewer", name)
+                })?;
+
+                if is_json {
+                    serialize_json_field(writer, name, value)?;
+                } else {
+                    writer.write_all(value.as_bytes())?;
+                }
+            }
+            FieldMap::Some { name, colspan } => {
+                if is_json {
+                    serialize_json_value(writer, name)?;
+                    writer.write_all(b":")?;
+                    serialize_json_array(writer, &mut fields.take(*colspan))?;
+                } else {
+                    for (i, value) in fields.take(*colspan).enumerate() {
+                        if i > 0 {
+                            writer.write_all(app_options.output_greedy_delimiter.as_bytes())?;
+                        }
+                        writer.write_all(value.as_bytes())?;
+                    }
+                }
+            }
+            FieldMap::Greedy { name } => {
+                if is_json {
+                    serialize_json_value(writer, name)?;
+                    writer.write_all(b":")?;
+                    serialize_json_array(writer, fields)?;
+                } else {
+                    for (i, value) in fields.enumerate() {
+                        if i > 0 {
+                            writer.write_all(app_options.output_greedy_delimiter.as_bytes())?;
+                        }
+                        writer.write_all(value.as_bytes())?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn consume_fields(&self, fields: &mut impl Iterator<Item = &'a str>) {
+        match self {
+            FieldMap::One { .. } => {
+                let _ = fields.next();
+            }
+            FieldMap::Some { colspan, .. } => {
+                for _ in 0..*colspan {
+                    let _ = fields.next();
+                }
+            }
+            FieldMap::Greedy { .. } => for _ in fields {},
+        }
+    }
 }
 
 /// Processes the input line by line according to the provided settings and outputs the results.
 pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<()> {
-    // determine the set of field names to include in the output based on the select option if the user defined it,
-    // otherwise include all fields defined in the mapping.
-    let selected_field_names: HashSet<&str> = settings
-        .select
-        .as_ref()
-        .map(|s| s.iter().map(|f| f.as_str()).collect())
-        .unwrap_or_else(|| settings.mapping.iter().map(|m| m.name()).collect());
+    let mut writer = BufWriter::new(std::io::stdout());
+
+    let mappings: Vec<_> = settings
+        .mapping
+        .iter()
+        .map(|mapping| {
+            let is_selected = settings
+                .select
+                .as_ref()
+                .map(|s| s.contains(mapping.name()))
+                .unwrap_or(true);
+
+            (mapping, is_selected)
+        })
+        .collect();
 
     for line in reader
         .lines()
@@ -39,13 +124,17 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         .take(settings.take.unwrap_or(usize::MAX))
     {
         // split by the specified delimiter
-        let fields: Vec<&str> = line.split(&settings.delimiter).collect();
+        // FIXME: as moved to memchr, it only operates on the first byte of the delimiter
+        let fields = split_by_delimiter(&line, *settings.delimiter.as_bytes().first().unwrap());
 
         // for now, we always validate the number of fields against the mapping if the mapping is not greedy
         // TODO: implement --strict option to control this behavior
         let mapping_count = mapping_columns_count(&settings.mapping);
         if let Some(count) = mapping_count {
-            let fields_count = fields.len();
+            let mut fields_count = 0;
+            for _ in fields.clone() {
+                fields_count += 1;
+            }
             if fields_count != count {
                 return Err(format!(
                     "Expected {} fields based on mapping, but got {}: '{}'",
@@ -54,94 +143,35 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
             }
         }
 
+        if settings.json {
+            writer.write_all(b"{")?;
+        }
+
         // let's use an iterator to process the fields according to the mapping, and consume columns as we go
         let mut fields_iterator = fields.into_iter();
+        let mut is_first = true;
 
-        // the final output fields that will be displayed
-        let mut selected_fields: Vec<(String, SelectedField)> = Vec::new();
-
-        // FIXME: even this this match works as expected, it is hard to read and has redundant code
-        for mapping in &settings.mapping {
-            match mapping {
-                FieldMap::One { name } => {
-                    if let Some(field) = fields_iterator.next() {
-                        // we have to do this check for each field and fieldmap type, because this column might
-                        // not make it into the output
-                        if selected_field_names.contains(name.as_str()) {
-                            selected_fields
-                                .push((name.clone(), SelectedField::One(field.to_string())));
-                        }
+        for (mapping, is_selected) in mappings.iter() {
+            if *is_selected {
+                if !is_first {
+                    if settings.json {
+                        writer.write_all(b",")?;
                     } else {
-                        return Err(format!(
-                            "Expected more fields for mapping '{}', but got fewer: '{}'",
-                            name, line
-                        ))?;
+                        writer.write_all(settings.output_delimiter.as_bytes())?;
                     }
                 }
-                FieldMap::Some { name, colspan } => {
-                    let mut values = Vec::new();
-                    for _ in 0..*colspan {
-                        if let Some(field) = fields_iterator.next() {
-                            if selected_field_names.contains(name.as_str()) {
-                                values.push(field.to_string());
-                            }
-                        } else {
-                            return Err(format!(
-                                "Expected more fields for mapping '{}', but got fewer: '{}'",
-                                name, line
-                            ))?;
-                        }
-                    }
-                    if !values.is_empty() {
-                        selected_fields.push((name.clone(), SelectedField::Some(values)));
-                    }
-                }
-                FieldMap::Greedy { name } => {
-                    let remaining_fields: Vec<String> =
-                        fields_iterator.map(|f| f.to_string()).collect();
+                is_first = false;
 
-                    if selected_field_names.contains(name.as_str()) {
-                        selected_fields.push((name.clone(), SelectedField::Some(remaining_fields)));
-                    }
-
-                    // since greedy consumes all remaining fields, and ".map()" will exhaust the iterator,
-                    // we have to do this explicitly to satisfy the borrow checker
-                    break;
-                }
+                mapping.write_field(&mut writer, &settings, fields_iterator.by_ref())?;
+            } else {
+                mapping.consume_fields(fields_iterator.by_ref());
             }
         }
 
         if settings.json {
-            // construct the json object for the selected fields
-            // colspan and greedy fields will be represented as arrays
-            let json_object: serde_json::Map<String, serde_json::Value> = selected_fields
-                .into_iter()
-                .map(|(name, field)| {
-                    let value = match field {
-                        SelectedField::One(val) => serde_json::Value::String(val),
-                        SelectedField::Some(vals) => serde_json::Value::Array(
-                            vals.into_iter().map(serde_json::Value::String).collect(),
-                        ),
-                    };
-                    (name, value)
-                })
-                .collect();
-
-            let json_string = serde_json::to_string(&json_object)?;
-            println!("{}", json_string);
-        } else {
-            // colspan and greedy fields will be joined by the output_greedy_delimiter,
-            // and then all fields will be joined by the output_delimiter
-            let output_fields: Vec<String> = selected_fields
-                .into_iter()
-                .map(|(_, field)| match field {
-                    SelectedField::One(val) => val,
-                    SelectedField::Some(vals) => vals.join(&settings.output_greedy_delimiter),
-                })
-                .collect();
-
-            println!("{}", output_fields.join(&settings.output_delimiter));
+            writer.write_all(b"}")?;
         }
+        writer.write_all(b"\n")?;
     }
 
     Ok(())
@@ -158,4 +188,58 @@ fn mapping_columns_count(mappings: &[FieldMap]) -> Option<usize> {
         }
     }
     Some(count)
+}
+
+fn serialize_json_array<'a>(
+    writer: &mut impl Write,
+    values: &mut impl Iterator<Item = &'a str>,
+) -> AnyResult<()> {
+    writer.write_all(b"[")?;
+    for (i, value) in values.enumerate() {
+        if i > 0 {
+            writer.write_all(b",")?;
+        }
+        serialize_json_value(writer, value)?;
+    }
+    writer.write_all(b"]")?;
+
+    Ok(())
+}
+
+fn serialize_json_value(writer: &mut impl Write, value: &str) -> AnyResult<()> {
+    writer.write_all(b"\"")?;
+    writer.write_all(value.as_bytes())?;
+    writer.write_all(b"\"")?;
+
+    Ok(())
+}
+
+fn serialize_json_field(writer: &mut impl Write, name: &str, value: &str) -> AnyResult<()> {
+    serialize_json_value(writer, name)?;
+    writer.write_all(b":")?;
+    serialize_json_value(writer, value)?;
+
+    Ok(())
+}
+
+fn split_by_delimiter<'a>(
+    line: &'a str,
+    delimiter: u8,
+) -> impl Iterator<Item = &'a str> + 'a + Clone {
+    let mut start = 0;
+
+    std::iter::from_fn(move || {
+        if start > line.len() {
+            return None;
+        }
+
+        let end = match memchr::memchr(delimiter, &line.as_bytes()[start..]) {
+            Some(pos) => start + pos,
+            None => line.len(),
+        };
+
+        let slice = &line[start..end];
+        start = end + 1; // Move past the delimiter for the next iteration
+        Some(slice)
+    })
 }
