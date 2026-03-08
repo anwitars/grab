@@ -35,7 +35,7 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         .filter_map(Result::ok)
     {
         // split by the specified delimiter
-        let fields: Vec<&str> = line.split(&settings.delimeter).collect();
+        let fields: Vec<&str> = line.split(&settings.delimiter).collect();
 
         let mapping_count = mapping_columns_count(&settings.mapping);
         if let Some(count) = mapping_count {
@@ -117,11 +117,11 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
                 .into_iter()
                 .map(|(_, field)| match field {
                     SelectedField::One(val) => val,
-                    SelectedField::Some(vals) => vals.join(&settings.output_greedy_delimeter),
+                    SelectedField::Some(vals) => vals.join(&settings.output_greedy_delimiter),
                 })
                 .collect();
 
-            println!("{}", output_fields.join(&settings.output_delimeter));
+            println!("{}", output_fields.join(&settings.output_delimiter));
         }
     }
 

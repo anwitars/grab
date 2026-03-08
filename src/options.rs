@@ -53,9 +53,9 @@ pub struct AppOptions {
     pub mapping: Vec<FieldMap>,
     pub select: Option<HashSet<String>>,
     pub skip: Option<usize>,
-    pub delimeter: String,
-    pub output_delimeter: String,
-    pub output_greedy_delimeter: String,
+    pub delimiter: String,
+    pub output_delimiter: String,
+    pub output_greedy_delimiter: String,
     pub json: bool,
 }
 
@@ -157,19 +157,19 @@ impl TryFrom<Cli> for AppOptions {
             .map(|s| s.split(',').map(|s| s.trim().to_string()).collect());
 
         let skip = cli.skip;
-        let delimeter = cli.delimeter;
+        let delimiter = cli.delimiter;
         let json = cli.json;
-        let output_delimeter = cli.output_delimeter;
-        let output_greedy_delimeter = cli.output_greedy_delimeter;
+        let output_delimiter = cli.output_delimiter;
+        let output_greedy_delimiter = cli.output_greedy_delimiter;
 
         Ok(AppOptions {
             mapping,
             select,
             skip,
-            delimeter,
+            delimiter,
             json,
-            output_delimeter,
-            output_greedy_delimeter,
+            output_delimiter,
+            output_greedy_delimiter,
         })
     }
 }

@@ -25,15 +25,15 @@ pub struct Cli {
 
     /// Delimiter used to split the input fields.
     #[clap(short, long, default_value = ",")]
-    pub delimeter: String,
+    pub delimiter: String,
 
     /// Delimiter used to join the output fields. Ignored if JSON output is enabled.
     #[clap(short, long, default_value = ",", conflicts_with = "json")]
-    pub output_delimeter: String,
+    pub output_delimiter: String,
 
     /// Delimiter used to join fields for greedy mappings. Ignored if JSON output is enabled.
     #[clap(long, default_value = ";", conflicts_with = "json")]
-    pub output_greedy_delimeter: String,
+    pub output_greedy_delimiter: String,
 
     /// Output results in JSON format instead of delimited text. Conflicts with output-delimiter option.
     #[clap(long)]
