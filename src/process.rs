@@ -1,5 +1,4 @@
 use crate::{
-    error::report_error,
     options::{AppOptions, FieldMap},
     try_report,
     types::AnyResult,
@@ -40,10 +39,7 @@ impl<'a> FieldWriter<'a> for FieldMap {
 
         match self {
             FieldMap::One { name } => {
-                let value = fields.next().ok_or_else(|| {
-                    format!("Expected more fields for mapping '{}', but got fewer", name)
-                })?;
-
+                let value = fields.next().unwrap_or_default();
                 if is_json {
                     serialize_json_field(writer, name, value)?;
                 } else {
@@ -51,12 +47,13 @@ impl<'a> FieldWriter<'a> for FieldMap {
                 }
             }
             FieldMap::Some { name, colspan } => {
+                let mut fields = (0..*colspan).map(|_| fields.next().unwrap_or_default());
                 if is_json {
                     serialize_json_value(writer, name)?;
                     writer.write_all(b":")?;
-                    serialize_json_array(writer, &mut fields.take(*colspan))?;
+                    serialize_json_array(writer, &mut fields)?;
                 } else {
-                    for (i, value) in fields.take(*colspan).enumerate() {
+                    for (i, value) in fields.enumerate() {
                         if i > 0 {
                             writer.write_all(app_options.output_greedy_delimiter.as_bytes())?;
                         }
@@ -70,11 +67,14 @@ impl<'a> FieldWriter<'a> for FieldMap {
                     writer.write_all(b":")?;
                     serialize_json_array(writer, fields)?;
                 } else {
-                    for (i, value) in fields.enumerate() {
+                    for i in 0.. {
                         if i > 0 {
                             writer.write_all(app_options.output_greedy_delimiter.as_bytes())?;
                         }
-                        writer.write_all(value.as_bytes())?;
+                        match fields.next() {
+                            Some(value) => writer.write_all(value.as_bytes())?,
+                            None => break,
+                        }
                     }
                 }
             }
@@ -138,24 +138,15 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
             .ok_or("Delimiter cannot be empty")?;
         let fields = split_by_delimiter(&line, *delimiter_byte);
 
-        // for now, we always validate the number of fields against the mapping if the mapping is not greedy
-        // TODO: implement --strict option to control this behavior
-        let mapping_count = mapping_columns_count(&settings.mapping);
-        if let Some(count) = mapping_count {
+        if !settings.loose {
             let mut fields_count = 0;
             for _ in fields.clone() {
                 fields_count += 1;
             }
-            if fields_count != count {
-                report_error(
-                    format!(
-                        "Expected {} fields based on the mapping, but got {}",
-                        count, fields_count
-                    ),
-                    line_number,
-                );
-                continue;
-            }
+            try_report!(
+                check_columns_count(&settings.mapping, fields_count),
+                line_number
+            )
         }
 
         if settings.json {
@@ -199,16 +190,31 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
 }
 
 /// Calculates the total number of columns that the mapping will consume, if it is not greedy.
-fn mapping_columns_count(mappings: &[FieldMap]) -> Option<usize> {
+fn check_columns_count(mappings: &[FieldMap], input_count: usize) -> AnyResult<()> {
+    let mut is_greedy = false;
     let mut count = 0;
     for mapping in mappings {
         match mapping {
             FieldMap::One { .. } => count += 1,
             FieldMap::Some { colspan, .. } => count += *colspan,
-            FieldMap::Greedy { .. } => return None, // Greedy can consume any number of columns
+            FieldMap::Greedy { .. } => is_greedy = true,
         }
     }
-    Some(count)
+
+    match (is_greedy, count) {
+        (false, expected) if expected == input_count => Ok(()),
+        (false, expected) => Err(format!(
+            "Expected {} fields based on the mapping, but got {}",
+            expected, input_count
+        )
+        .into()),
+        (true, expected) if expected <= input_count => Ok(()),
+        (true, expected) => Err(format!(
+            "Expected at least {} fields based on the mapping, but got {}",
+            expected, input_count
+        )
+        .into()),
+    }
 }
 
 fn serialize_json_array<'a>(

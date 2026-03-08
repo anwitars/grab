@@ -27,6 +27,15 @@ pub struct Cli {
     #[clap(long)]
     pub take: Option<usize>,
 
+    /// By default, the tool will error if the number of input fields does not match the mapping.
+    /// This flag allows for more lenient parsing, simply not caring about extra or missing fields.
+    /// When enabled, it might result in extra fields being ignored or missing fields being filled with empty strings,
+    /// depending on the mapping configuration.
+    /// Use only if the input data is known to be inconsistent and you want to extract whatever can be extracted without
+    /// strict validation.
+    #[clap(long)]
+    pub loose: bool,
+
     /// Delimiter used to split the input fields.
     #[clap(short, long, default_value = ",")]
     pub delimiter: String,

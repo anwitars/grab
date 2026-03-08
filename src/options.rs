@@ -60,6 +60,7 @@ pub struct AppOptions {
     pub select: Option<HashSet<String>>,
     pub skip: Option<usize>,
     pub take: Option<usize>,
+    pub loose: bool,
     pub delimiter: String,
     pub output_delimiter: String,
     pub output_greedy_delimiter: String,
@@ -175,6 +176,7 @@ impl TryFrom<Cli> for AppOptions {
 
         let skip = cli.skip;
         let take = cli.take;
+        let loose = cli.loose;
         let delimiter = cli.delimiter;
         let json = cli.json;
         let output_delimiter = cli.output_delimiter;
@@ -185,6 +187,7 @@ impl TryFrom<Cli> for AppOptions {
             select,
             skip,
             take,
+            loose,
             delimiter,
             json,
             output_delimiter,
