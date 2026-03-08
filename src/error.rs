@@ -2,9 +2,12 @@
 #[macro_export]
 macro_rules! try_report {
     ($expr:expr, $line_number:expr) => {
-        if let Err(e) = $expr {
-            $crate::error::report_error(e.to_string(), $line_number);
-            continue;
+        match $expr {
+            Ok(value) => value,
+            Err(e) => {
+                $crate::error::report_error(e.to_string(), $line_number);
+                continue;
+            }
         }
     };
 }

@@ -116,10 +116,20 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         })
         .collect();
 
-    for (line_number, line) in reader
-        .lines()
-        // filter out lines that cannot be read
-        .filter_map(Result::ok)
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .buffer_capacity(64 * 1024)
+        .delimiter(
+            *settings
+                .delimiter
+                .as_bytes()
+                .first()
+                .ok_or("Delimiter cannot be empty")?,
+        )
+        .from_reader(reader);
+
+    for (line_number, record) in reader
+        .records()
         // skip the specified number of lines if the skip option is set
         .skip(settings.skip.unwrap_or(0))
         // take only the specified number of lines if the take option is set
@@ -129,22 +139,12 @@ pub fn process<R: BufRead>(reader: &mut R, settings: &AppOptions) -> AnyResult<(
         let line_number = line_number + 1; // Line numbers are 1-based for user-friendly error reporting
         let line_number = line_number + settings.skip.unwrap_or(0); // Adjust line number based on skipped lines
 
-        // split by the specified delimiter
-        // FIXME: as moved to memchr, it only operates on the first byte of the delimiter
-        let delimiter_byte = settings
-            .delimiter
-            .as_bytes()
-            .first()
-            .ok_or("Delimiter cannot be empty")?;
-        let fields = split_by_delimiter(&line, *delimiter_byte);
+        let record = try_report!(record, line_number);
+        let fields = record.into_iter();
 
         if !settings.loose {
-            let mut fields_count = 0;
-            for _ in fields.clone() {
-                fields_count += 1;
-            }
             try_report!(
-                check_columns_count(&settings.mapping, fields_count),
+                check_columns_count(&settings.mapping, record.len()),
                 line_number
             )
         }
@@ -247,26 +247,4 @@ fn serialize_json_field(writer: &mut impl Write, name: &str, value: &str) -> Any
     serialize_json_value(writer, value)?;
 
     Ok(())
-}
-
-fn split_by_delimiter<'a>(
-    line: &'a str,
-    delimiter: u8,
-) -> impl Iterator<Item = &'a str> + 'a + Clone {
-    let mut start = 0;
-
-    std::iter::from_fn(move || {
-        if start > line.len() {
-            return None;
-        }
-
-        let end = match memchr::memchr(delimiter, &line.as_bytes()[start..]) {
-            Some(pos) => start + pos,
-            None => line.len(),
-        };
-
-        let slice = &line[start..end];
-        start = end + 1; // Move past the delimiter for the next iteration
-        Some(slice)
-    })
 }
