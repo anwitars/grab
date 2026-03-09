@@ -105,6 +105,7 @@ pub fn process<R: Read, W: Write>(
     settings: &AppOptions,
 ) -> AnyResult<()> {
     let selected_mappings = settings.selected_mappings();
+    let expected_columns_count = calculate_expected_columns_count(&settings.mapping)?;
 
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
@@ -130,7 +131,13 @@ pub fn process<R: Read, W: Write>(
         let line_number = line_number + settings.skip.unwrap_or(0); // Adjust line number based on skipped lines
         let record = try_report!(record, line_number);
         try_report!(
-            process_record(record, writer, settings, &selected_mappings),
+            process_record(
+                record,
+                writer,
+                settings,
+                &selected_mappings,
+                &expected_columns_count
+            ),
             line_number
         );
     }
@@ -143,11 +150,12 @@ fn process_record(
     writer: &mut impl Write,
     settings: &AppOptions,
     mappings: &[(&FieldMap, bool)],
+    expected_columns_count: &ExpectedColumnsCount,
 ) -> AnyResult<()> {
     let fields = record.into_iter();
 
     if !settings.loose {
-        check_columns_count(&settings.mapping, record.len())?;
+        check_columns_count(expected_columns_count, record.len())?;
     }
 
     if settings.json {
@@ -185,20 +193,30 @@ fn process_record(
 
 #[derive(Debug, thiserror::Error)]
 #[cfg_attr(test, derive(PartialEq))]
+enum CalculateExpectedColumnsCountError {
+    #[error("Colspan value is too large and exceeds the maximum allowed usize value")]
+    ColspanBiggerThanUsizeMax,
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+enum ExpectedColumnsCount {
+    Exact(usize),
+    AtLeast(usize),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[cfg_attr(test, derive(PartialEq))]
 enum CheckColumnsCountError {
     #[error("Expected {expected} fields based on the mapping, but got {actual}")]
     NotExact { expected: usize, actual: usize },
     #[error("Expected at least {min} fields based on the mapping, but got {actual}")]
     NotAtLeast { min: usize, actual: usize },
-    #[error("Colspan value is too large and exceeds the maximum allowed usize value")]
-    ColspanBiggerThanUsizeMax,
 }
 
-/// Calculates the total number of columns that the mapping will consume, if it is not greedy.
-fn check_columns_count(
+fn calculate_expected_columns_count(
     mappings: &[FieldMap],
-    input_count: usize,
-) -> Result<(), CheckColumnsCountError> {
+) -> Result<ExpectedColumnsCount, CalculateExpectedColumnsCountError> {
     let mut is_greedy = false;
     let mut count: usize = 0;
     for mapping in mappings {
@@ -206,28 +224,38 @@ fn check_columns_count(
             FieldMap::One { .. } => {
                 count = count
                     .checked_add(1)
-                    .ok_or(CheckColumnsCountError::ColspanBiggerThanUsizeMax)?
+                    .ok_or(CalculateExpectedColumnsCountError::ColspanBiggerThanUsizeMax)?
             }
             FieldMap::Some { colspan, .. } => {
                 count = count
                     .checked_add(*colspan)
-                    .ok_or(CheckColumnsCountError::ColspanBiggerThanUsizeMax)?
+                    .ok_or(CalculateExpectedColumnsCountError::ColspanBiggerThanUsizeMax)?
             }
             FieldMap::Greedy { .. } => is_greedy = true,
         }
     }
 
-    match (is_greedy, count) {
-        (false, expected) if expected == input_count => Ok(()),
-        (false, expected) => Err(CheckColumnsCountError::NotExact {
+    if is_greedy {
+        Ok(ExpectedColumnsCount::AtLeast(count))
+    } else {
+        Ok(ExpectedColumnsCount::Exact(count))
+    }
+}
+
+fn check_columns_count(
+    expected: &ExpectedColumnsCount,
+    input: usize,
+) -> Result<(), CheckColumnsCountError> {
+    match *expected {
+        ExpectedColumnsCount::Exact(expected) if expected == input => Ok(()),
+        ExpectedColumnsCount::Exact(expected) => Err(CheckColumnsCountError::NotExact {
             expected,
-            actual: input_count,
+            actual: input,
         }),
-        (true, expected) if expected <= input_count => Ok(()),
-        (true, expected) => Err(CheckColumnsCountError::NotAtLeast {
-            min: expected,
-            actual: input_count,
-        }),
+        ExpectedColumnsCount::AtLeast(min) if min <= input => Ok(()),
+        ExpectedColumnsCount::AtLeast(min) => {
+            Err(CheckColumnsCountError::NotAtLeast { min, actual: input })
+        }
     }
 }
 
@@ -275,156 +303,128 @@ mod tests {
         use super::*;
 
         #[test]
-        fn serialize_value() {
+        fn serialize_value() -> AnyResult<()> {
             let mut output = Vec::new();
-            serialize_json_value(&mut output, "test").unwrap();
+            serialize_json_value(&mut output, "test")?;
             assert_eq!(String::from_utf8(output).unwrap(), r#""test""#);
+            Ok(())
         }
 
         #[test]
-        fn serialize_array() {
+        fn serialize_array() -> AnyResult<()> {
             let mut output = Vec::new();
-            serialize_json_array(&mut output, &mut ["value1", "value2"].into_iter()).unwrap();
+            serialize_json_array(&mut output, &mut ["value1", "value2"].into_iter())?;
             assert_eq!(String::from_utf8(output).unwrap(), r#"["value1","value2"]"#);
+            Ok(())
         }
 
         #[test]
-        fn serialize_field() {
+        fn serialize_field() -> AnyResult<()> {
             let mut output = Vec::new();
-            serialize_json_field(&mut output, "name", "value").unwrap();
+            serialize_json_field(&mut output, "name", "value")?;
             assert_eq!(String::from_utf8(output).unwrap(), r#""name":"value""#);
+            Ok(())
         }
     }
 
-    mod column_count {
+    mod columns {
         use super::*;
 
-        mod ok {
-            use super::*;
-
-            #[test]
-            fn exact() {
-                let mappings = vec![
-                    FieldMap::One {
-                        name: "a".to_string(),
-                    },
-                    FieldMap::Some {
-                        name: "b".to_string(),
-                        colspan: 2,
-                    },
-                ];
-                assert_eq!(check_columns_count(&mappings, 3), Ok(()));
-            }
-
-            #[test]
-            fn greedy() {
-                let mappings = vec![
-                    FieldMap::One {
-                        name: "a".to_string(),
-                    },
-                    FieldMap::Greedy {
-                        name: "b".to_string(),
-                    },
-                ];
-                assert_eq!(check_columns_count(&mappings, 5), Ok(()));
-            }
-
-            #[test]
-            fn greedy_exact() {
-                let mappings = vec![
-                    FieldMap::One {
-                        name: "a".to_string(),
-                    },
-                    FieldMap::Greedy {
-                        name: "b".to_string(),
-                    },
-                ];
-                assert_eq!(check_columns_count(&mappings, 1), Ok(()));
-            }
-        }
-
-        mod error {
+        mod count {
             use super::*;
             const USIZE_MAX_HALF: usize = usize::MAX / 2;
 
             #[test]
-            fn too_few() {
+            fn exact() -> AnyResult<()> {
                 let mappings = vec![
                     FieldMap::One {
-                        name: "a".to_string(),
+                        name: "field1".to_string(),
                     },
                     FieldMap::Some {
-                        name: "b".to_string(),
+                        name: "field2".to_string(),
                         colspan: 2,
                     },
                 ];
-                assert_eq!(
-                    check_columns_count(&mappings, 2),
-                    Err(CheckColumnsCountError::NotExact {
-                        expected: 3,
-                        actual: 2,
-                    })
-                );
+                let expected = calculate_expected_columns_count(&mappings)?;
+                assert_eq!(expected, ExpectedColumnsCount::Exact(3));
+                Ok(())
             }
 
             #[test]
-            fn too_many() {
+            fn greedy() -> AnyResult<()> {
                 let mappings = vec![
                     FieldMap::One {
-                        name: "a".to_string(),
+                        name: "field1".to_string(),
                     },
                     FieldMap::Some {
-                        name: "b".to_string(),
+                        name: "field2".to_string(),
                         colspan: 2,
-                    },
-                ];
-                assert_eq!(
-                    check_columns_count(&mappings, 4),
-                    Err(CheckColumnsCountError::NotExact {
-                        expected: 3,
-                        actual: 4,
-                    })
-                );
-            }
-
-            #[test]
-            fn greedy_too_few() {
-                let mappings = vec![
-                    FieldMap::One {
-                        name: "a".to_string(),
-                    },
-                    FieldMap::One {
-                        name: "b".to_string(),
                     },
                     FieldMap::Greedy {
-                        name: "c".to_string(),
+                        name: "field3".to_string(),
                     },
                 ];
+                let expected = calculate_expected_columns_count(&mappings)?;
+                assert_eq!(expected, ExpectedColumnsCount::AtLeast(3));
+                Ok(())
+            }
+
+            #[test]
+            fn overflow() {
+                let mappings = vec![
+                    FieldMap::Some {
+                        name: "field1".to_string(),
+                        colspan: USIZE_MAX_HALF + 1,
+                    },
+                    FieldMap::Some {
+                        name: "field2".to_string(),
+                        colspan: USIZE_MAX_HALF + 1,
+                    },
+                ];
+                let result = calculate_expected_columns_count(&mappings);
                 assert_eq!(
-                    check_columns_count(&mappings, 1),
-                    Err(CheckColumnsCountError::NotAtLeast { min: 2, actual: 1 })
+                    result,
+                    Err(CalculateExpectedColumnsCountError::ColspanBiggerThanUsizeMax)
+                );
+            }
+        }
+
+        mod check {
+            use super::*;
+
+            #[test]
+            fn exact_match() {
+                let expected = ExpectedColumnsCount::Exact(3);
+                assert!(check_columns_count(&expected, 3).is_ok());
+            }
+
+            #[test]
+            fn exact_mismatch() {
+                let expected = ExpectedColumnsCount::Exact(3);
+                let result = check_columns_count(&expected, 4);
+                assert_eq!(
+                    result,
+                    Err(CheckColumnsCountError::NotExact {
+                        expected: 3,
+                        actual: 4
+                    })
                 );
             }
 
             #[test]
-            fn colspan_too_large() {
-                let mappings = vec![
-                    FieldMap::Some {
-                        name: "a".to_string(),
-                        colspan: USIZE_MAX_HALF,
-                    },
-                    FieldMap::Some {
-                        name: "b".to_string(),
-                        colspan: USIZE_MAX_HALF,
-                    },
-                    FieldMap::Some {
-                        name: "c".to_string(),
-                        colspan: USIZE_MAX_HALF,
-                    },
-                ];
+            fn at_least_match() {
+                let expected = ExpectedColumnsCount::AtLeast(3);
+                assert!(check_columns_count(&expected, 3).is_ok());
+                assert!(check_columns_count(&expected, 4).is_ok());
+            }
+
+            #[test]
+            fn at_least_mismatch() {
+                let expected = ExpectedColumnsCount::AtLeast(3);
+                let result = check_columns_count(&expected, 2);
                 assert_eq!(
-                    check_columns_count(&mappings, 0),
-                    Err(CheckColumnsCountError::ColspanBiggerThanUsizeMax)
+                    result,
+                    Err(CheckColumnsCountError::NotAtLeast { min: 3, actual: 2 })
                 );
             }
         }
