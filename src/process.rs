@@ -263,6 +263,11 @@ fn serialize_json_array(
     writer: &mut impl Write,
     values: &mut impl Iterator<Item = impl AsRef<str>>,
 ) -> AnyResult<()> {
+    // do not use serde_json here, as that would expect a Vec<_> in order to serialize an array,
+    // but for performance reasons we want to serialize the array directly from the iterator without collecting it into
+    // a Vec<_>
+    // and since serializing the array is just writing the values with commas in between,
+    // we can do that manually without any overhead
     writer.write_all(b"[")?;
     for (i, value) in values.enumerate() {
         if i > 0 {
@@ -276,11 +281,8 @@ fn serialize_json_array(
 }
 
 fn serialize_json_value(writer: &mut impl Write, value: impl AsRef<str>) -> AnyResult<()> {
-    writer.write_all(b"\"")?;
-    writer.write_all(value.as_ref().as_bytes())?;
-    writer.write_all(b"\"")?;
-
-    Ok(())
+    // even though serde_json is used, it almost not add any overhead, and adds safety by proper escaping
+    serde_json::to_writer(writer, &value.as_ref()).map_err(|e| e.into())
 }
 
 fn serialize_json_field(
