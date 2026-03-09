@@ -1,7 +1,48 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use crate::{cli::Cli, types::AnyResult};
+use crate::cli::Cli;
+
+#[derive(Debug, thiserror::Error)]
+#[cfg_attr(test, derive(PartialEq))]
+pub enum FieldMapParseError {
+    #[error("Invalid mapping format: '{0}'")]
+    InvalidFormat(String),
+    #[error("Invalid colspan value '{mapping}': {source}")]
+    InvalidColspan {
+        mapping: String,
+        source: std::num::ParseIntError,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+#[cfg_attr(test, derive(PartialEq))]
+pub enum AppOptionsValidationError {
+    #[error("Mapping cannot be empty")]
+    EmptyMapping,
+    #[error("Mapping field name cannot be empty at position {position}")]
+    EmptyMappingName { position: usize },
+    #[error("Duplicate field in mapping: {0}")]
+    DuplicateMappingField(String),
+    #[error("Colspan must be greater than 0 for mapping '{0}'")]
+    ColspanBelowOne(String),
+    #[error("{0}")]
+    ColspanParseError(#[from] FieldMapParseError),
+    #[error("Greedy field must be the last in the mapping: '{0}'")]
+    GreedyNotLast(String),
+    #[error("Select cannot be empty if provided")]
+    EmptySelect,
+    #[error("Select field name cannot be empty at position {position}")]
+    EmptySelectName { position: usize },
+    #[error(
+        "Select cannot contain '_' as it is reserved for unmapped fields, found at position {position}"
+    )]
+    SelectContainsPlaceholder { position: usize },
+    #[error("Select field '{field}' not found in mapping")]
+    SelectFieldNotInMapping { field: String },
+    #[error("Duplicate field in select: {0}")]
+    DuplicateSelectField(String),
+}
 
 /// Defines the user's intent for how to map input fields to output fields,
 /// including support for greedy and multi-field mappings.
@@ -24,10 +65,14 @@ impl FieldMap {
             }
         }
     }
+
+    pub fn is_placeholder(&self) -> bool {
+        self.name() == "_"
+    }
 }
 
 impl FromStr for FieldMap {
-    type Err = String;
+    type Err = FieldMapParseError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let parts: Vec<&str> = value.split(':').collect();
@@ -42,13 +87,16 @@ impl FromStr for FieldMap {
                 if span_part == "g" {
                     Ok(FieldMap::Greedy { name })
                 } else {
-                    let colspan = span_part
-                        .parse::<usize>()
-                        .map_err(|e| format!("Invalid colspan value '{}': {}", span_part, e))?;
+                    let colspan = span_part.parse::<usize>().map_err(|e| {
+                        FieldMapParseError::InvalidColspan {
+                            mapping: span_part.to_string(),
+                            source: e,
+                        }
+                    })?;
                     Ok(FieldMap::Some { name, colspan })
                 }
             }
-            _ => Err(format!("Invalid mapping format: '{}'", value)),
+            _ => Err(FieldMapParseError::InvalidFormat(value.to_string())),
         }
     }
 }
@@ -57,7 +105,7 @@ impl FromStr for FieldMap {
 #[derive(Debug)]
 pub struct AppOptions {
     pub mapping: Vec<FieldMap>,
-    pub select: Option<HashSet<String>>,
+    pub select: Option<Vec<String>>,
     pub skip: Option<usize>,
     pub take: Option<usize>,
     pub loose: bool,
@@ -69,9 +117,9 @@ pub struct AppOptions {
 
 impl AppOptions {
     /// Validates the mapping options
-    fn validate_mapping(&self) -> AnyResult<()> {
+    fn validate_mapping(&self) -> Result<(), AppOptionsValidationError> {
         if self.mapping.is_empty() {
-            return Err("Mapping cannot be empty".into());
+            return Err(AppOptionsValidationError::EmptyMapping);
         }
 
         let mut seen = HashSet::new();
@@ -79,30 +127,24 @@ impl AppOptions {
             let name = m.name();
 
             if name.is_empty() {
-                return Err(format!("Mapping field name cannot be empty at position {}", i).into());
+                return Err(AppOptionsValidationError::EmptyMappingName { position: i + 1 });
             }
 
             if name != "_" && !seen.insert(name) {
-                return Err(format!("Duplicate field in mapping: {}", name).into());
+                return Err(AppOptionsValidationError::DuplicateMappingField(
+                    name.to_string(),
+                ));
             }
 
             match m {
                 FieldMap::Some { colspan, .. } => {
                     if *colspan == 0 {
-                        return Err(format!(
-                            "Colspan must be greater than 0 in mapping at position {}",
-                            i
-                        )
-                        .into());
+                        return Err(AppOptionsValidationError::ColspanBelowOne(name.to_string()));
                     }
                 }
                 FieldMap::Greedy { .. } => {
                     if i != self.mapping.len() - 1 {
-                        return Err(format!(
-                            "Greedy field must be the last in the mapping, found at position {}",
-                            i
-                        )
-                        .into());
+                        return Err(AppOptionsValidationError::GreedyNotLast(name.to_string()));
                     }
                 }
                 _ => {}
@@ -113,14 +155,16 @@ impl AppOptions {
     }
 
     /// Validates the select options
-    fn validate_select(&self) -> AnyResult<()> {
+    fn validate_select(&self) -> Result<(), AppOptionsValidationError> {
         if let Some(ref select) = self.select {
             if select.is_empty() {
-                return Err("Select cannot be empty if provided".into());
+                return Err(AppOptionsValidationError::EmptySelect);
             }
 
-            if select.iter().any(|s| s.trim().is_empty()) {
-                return Err("Select cannot contain empty fields".into());
+            for (i, s) in select.iter().enumerate() {
+                if s.trim().is_empty() {
+                    return Err(AppOptionsValidationError::EmptySelectName { position: i + 1 });
+                }
             }
 
             let mapping_set: HashSet<_> = self
@@ -130,21 +174,23 @@ impl AppOptions {
                 .filter(|name| name != &"_")
                 .collect();
 
-            for s in select {
+            for (i, s) in select.iter().enumerate() {
                 if s == "_" {
-                    return Err(
-                        "Select cannot contain '_' as it is reserved for unmapped fields".into(),
-                    );
+                    return Err(AppOptionsValidationError::SelectContainsPlaceholder {
+                        position: i + 1,
+                    });
                 }
                 if !mapping_set.contains(s.as_str()) {
-                    return Err(format!("Select field '{}' not found in mapping", s).into());
+                    return Err(AppOptionsValidationError::SelectFieldNotInMapping {
+                        field: s.clone(),
+                    });
                 }
             }
 
             let mut seen = HashSet::new();
             for s in select {
                 if !seen.insert(s) {
-                    return Err(format!("Duplicate field in select: {}", s).into());
+                    return Err(AppOptionsValidationError::DuplicateSelectField(s.clone()));
                 }
             }
         }
@@ -153,15 +199,37 @@ impl AppOptions {
     }
 
     /// Runs all validation checks on the options.
-    pub fn validate(&self) -> AnyResult<()> {
+    pub fn validate(&self) -> Result<(), AppOptionsValidationError> {
         self.validate_mapping()?;
         self.validate_select()?;
         Ok(())
     }
+
+    pub fn selected_mappings(&self) -> Vec<(&FieldMap, bool)> {
+        let selected_fields = self
+            .select
+            .as_ref()
+            .map(|s| s.iter().map(AsRef::<str>::as_ref).collect::<HashSet<_>>());
+
+        self.mapping
+            .iter()
+            .map(|mapping| {
+                let is_selected = if mapping.is_placeholder() {
+                    false
+                } else {
+                    selected_fields
+                        .as_ref()
+                        .map(|s| s.contains(mapping.name()))
+                        .unwrap_or(true)
+                };
+                (mapping, is_selected)
+            })
+            .collect()
+    }
 }
 
 impl TryFrom<Cli> for AppOptions {
-    type Error = String;
+    type Error = AppOptionsValidationError;
 
     fn try_from(cli: Cli) -> Result<Self, Self::Error> {
         let mapping = cli
@@ -193,5 +261,130 @@ impl TryFrom<Cli> for AppOptions {
             output_delimiter,
             output_greedy_delimiter,
         })
+    }
+}
+
+#[cfg(test)]
+impl Default for AppOptions {
+    fn default() -> Self {
+        AppOptions {
+            mapping: Vec::new(),
+            select: None,
+            skip: None,
+            take: None,
+            loose: false,
+            delimiter: ",".to_string(),
+            json: false,
+            output_delimiter: ",".to_string(),
+            output_greedy_delimiter: ";".to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Cli;
+    use clap::Parser;
+
+    mod validation {
+        use super::*;
+
+        fn from_args(args: &[&str]) -> Result<(), AppOptionsValidationError> {
+            let cli = Cli::parse_from(args);
+            AppOptions::try_from(cli)
+                .expect("Failed to parse options")
+                .validate()
+        }
+
+        #[test]
+        fn empty_mapping_name() {
+            assert_eq!(
+                from_args(&["wow", "--mapping", "name,,email"]),
+                Err(AppOptionsValidationError::EmptyMappingName { position: 2 })
+            )
+        }
+
+        #[test]
+        fn duplicate_mapping_field() {
+            assert_eq!(
+                from_args(&["wow", "--mapping", "name,age,name"]),
+                Err(AppOptionsValidationError::DuplicateMappingField(
+                    "name".to_string()
+                ))
+            )
+        }
+
+        #[test]
+        fn non_positive_colspan() {
+            assert_eq!(
+                from_args(&["wow", "--mapping", "name:0,age,email"]),
+                Err(AppOptionsValidationError::ColspanBelowOne(
+                    "name".to_string()
+                ))
+            )
+        }
+
+        #[test]
+        fn greedy_not_last() {
+            assert_eq!(
+                from_args(&["wow", "--mapping", "name,age:g,email"]),
+                Err(AppOptionsValidationError::GreedyNotLast("age".to_string()))
+            )
+        }
+
+        #[test]
+        fn empty_select_name() {
+            assert_eq!(
+                from_args(&[
+                    "wow",
+                    "--mapping",
+                    "name,age,email",
+                    "--select",
+                    "name,,email",
+                ]),
+                Err(AppOptionsValidationError::EmptySelectName { position: 2 })
+            )
+        }
+
+        #[test]
+        fn select_contains_placeholder() {
+            assert_eq!(
+                from_args(&["wow", "--mapping", "name,age,_", "--select", "name,_",]),
+                Err(AppOptionsValidationError::SelectContainsPlaceholder { position: 2 })
+            )
+        }
+
+        #[test]
+        fn select_field_not_in_mapping() {
+            assert_eq!(
+                from_args(&[
+                    "wow",
+                    "--mapping",
+                    "name,age,email",
+                    "--select",
+                    "name,email,gender",
+                ]),
+                Err(AppOptionsValidationError::SelectFieldNotInMapping {
+                    field: "gender".to_string()
+                })
+            )
+        }
+
+        #[test]
+        fn duplicate_select_field() {
+            assert_eq!(
+                from_args(&[
+                    "wow",
+                    "--mapping",
+                    "name,age,email",
+                    "--select",
+                    "name,email,name",
+                ]),
+                Err(AppOptionsValidationError::DuplicateSelectField(
+                    "name".to_string()
+                ))
+            )
+        }
     }
 }

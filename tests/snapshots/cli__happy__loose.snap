@@ -1,0 +1,9 @@
+---
+source: tests/cli.rs
+expression: "common::run_grab(&[\"--mapping\", \"name\", \"--skip\", \"1\", \"--loose\"],\ncommon::StreamSource::File(\"tests/fixtures/simple.csv\"),)"
+---
+stdout:
+Alice
+Fred
+
+stderr:

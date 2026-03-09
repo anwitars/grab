@@ -1,0 +1,7 @@
+---
+source: tests/cli.rs
+expression: "common::run_grab(&[\"--mapping\", \"column\", \"--json\"],\ncommon::StreamSource::File(\"tests/fixtures/empty.csv\"),)"
+---
+stdout:
+
+stderr:

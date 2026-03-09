@@ -1,0 +1,10 @@
+---
+source: tests/cli.rs
+expression: "run_grab(&[\"--mapping\", \"name,age,email\", \"--skip\", \"1\", \"--json\",],\nStreamSource::File(\"tests/fixtures/missing_columns.csv\"))"
+---
+stdout:
+{"name":"Alice","age":"34","email":"alice@email.com"}
+{"name":"Fred","age":"","email":"fred@email.com"}
+
+stderr:
+Error on line 4: CSV error: record 3 (line: 4, byte: 61): found record with 2 fields, but the previous record has 3 fields

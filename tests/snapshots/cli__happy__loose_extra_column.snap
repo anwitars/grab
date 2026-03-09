@@ -1,0 +1,9 @@
+---
+source: tests/cli.rs
+expression: "common::run_grab(&[\"--mapping\",\n\"name,age,email,extra,extra_colspan:2,extra_greedy:g\", \"--skip\", \"1\",\n\"--loose\", \"--json\"],\ncommon::StreamSource::File(\"tests/fixtures/simple.csv\"),)"
+---
+stdout:
+{"name":"Alice","age":"34","email":"alice@email.com","extra":"","extra_colspan":["",""],"extra_greedy":[]}
+{"name":"Fred","age":"29","email":"fred@email.com","extra":"","extra_colspan":["",""],"extra_greedy":[]}
+
+stderr:

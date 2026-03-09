@@ -104,23 +104,7 @@ pub fn process<R: Read, W: Write>(
     writer: &mut W,
     settings: &AppOptions,
 ) -> AnyResult<()> {
-    let mappings: Vec<_> = settings
-        .mapping
-        .iter()
-        .map(|mapping| {
-            let is_selected = if mapping.is_placeholder() {
-                false
-            } else {
-                settings
-                    .select
-                    .as_ref()
-                    .map(|s| s.contains(mapping.name()))
-                    .unwrap_or(true)
-            };
-
-            (mapping, is_selected)
-        })
-        .collect();
+    let selected_mappings = settings.selected_mappings();
 
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
@@ -146,7 +130,7 @@ pub fn process<R: Read, W: Write>(
         let line_number = line_number + settings.skip.unwrap_or(0); // Adjust line number based on skipped lines
         let record = try_report!(record, line_number);
         try_report!(
-            process_record(record, writer, settings, &mappings),
+            process_record(record, writer, settings, &selected_mappings),
             line_number
         );
     }
@@ -199,37 +183,57 @@ fn process_record(
     Ok(())
 }
 
+#[derive(Debug, thiserror::Error)]
+#[cfg_attr(test, derive(PartialEq))]
+enum CheckColumnsCountError {
+    #[error("Expected {expected} fields based on the mapping, but got {actual}")]
+    NotExact { expected: usize, actual: usize },
+    #[error("Expected at least {min} fields based on the mapping, but got {actual}")]
+    NotAtLeast { min: usize, actual: usize },
+    #[error("Colspan value is too large and exceeds the maximum allowed usize value")]
+    ColspanBiggerThanUsizeMax,
+}
+
 /// Calculates the total number of columns that the mapping will consume, if it is not greedy.
-fn check_columns_count(mappings: &[FieldMap], input_count: usize) -> AnyResult<()> {
+fn check_columns_count(
+    mappings: &[FieldMap],
+    input_count: usize,
+) -> Result<(), CheckColumnsCountError> {
     let mut is_greedy = false;
-    let mut count = 0;
+    let mut count: usize = 0;
     for mapping in mappings {
         match mapping {
-            FieldMap::One { .. } => count += 1,
-            FieldMap::Some { colspan, .. } => count += *colspan,
+            FieldMap::One { .. } => {
+                count = count
+                    .checked_add(1)
+                    .ok_or(CheckColumnsCountError::ColspanBiggerThanUsizeMax)?
+            }
+            FieldMap::Some { colspan, .. } => {
+                count = count
+                    .checked_add(*colspan)
+                    .ok_or(CheckColumnsCountError::ColspanBiggerThanUsizeMax)?
+            }
             FieldMap::Greedy { .. } => is_greedy = true,
         }
     }
 
     match (is_greedy, count) {
         (false, expected) if expected == input_count => Ok(()),
-        (false, expected) => Err(format!(
-            "Expected {} fields based on the mapping, but got {}",
-            expected, input_count
-        )
-        .into()),
+        (false, expected) => Err(CheckColumnsCountError::NotExact {
+            expected,
+            actual: input_count,
+        }),
         (true, expected) if expected <= input_count => Ok(()),
-        (true, expected) => Err(format!(
-            "Expected at least {} fields based on the mapping, but got {}",
-            expected, input_count
-        )
-        .into()),
+        (true, expected) => Err(CheckColumnsCountError::NotAtLeast {
+            min: expected,
+            actual: input_count,
+        }),
     }
 }
 
-fn serialize_json_array<'a>(
+fn serialize_json_array(
     writer: &mut impl Write,
-    values: &mut impl Iterator<Item = &'a str>,
+    values: &mut impl Iterator<Item = impl AsRef<str>>,
 ) -> AnyResult<()> {
     writer.write_all(b"[")?;
     for (i, value) in values.enumerate() {
@@ -243,18 +247,186 @@ fn serialize_json_array<'a>(
     Ok(())
 }
 
-fn serialize_json_value(writer: &mut impl Write, value: &str) -> AnyResult<()> {
+fn serialize_json_value(writer: &mut impl Write, value: impl AsRef<str>) -> AnyResult<()> {
     writer.write_all(b"\"")?;
-    writer.write_all(value.as_bytes())?;
+    writer.write_all(value.as_ref().as_bytes())?;
     writer.write_all(b"\"")?;
 
     Ok(())
 }
 
-fn serialize_json_field(writer: &mut impl Write, name: &str, value: &str) -> AnyResult<()> {
+fn serialize_json_field(
+    writer: &mut impl Write,
+    name: impl AsRef<str>,
+    value: impl AsRef<str>,
+) -> AnyResult<()> {
     serialize_json_value(writer, name)?;
     writer.write_all(b":")?;
     serialize_json_value(writer, value)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod json {
+        use super::*;
+
+        #[test]
+        fn serialize_value() {
+            let mut output = Vec::new();
+            serialize_json_value(&mut output, "test").unwrap();
+            assert_eq!(String::from_utf8(output).unwrap(), r#""test""#);
+        }
+
+        #[test]
+        fn serialize_array() {
+            let mut output = Vec::new();
+            serialize_json_array(&mut output, &mut ["value1", "value2"].into_iter()).unwrap();
+            assert_eq!(String::from_utf8(output).unwrap(), r#"["value1","value2"]"#);
+        }
+
+        #[test]
+        fn serialize_field() {
+            let mut output = Vec::new();
+            serialize_json_field(&mut output, "name", "value").unwrap();
+            assert_eq!(String::from_utf8(output).unwrap(), r#""name":"value""#);
+        }
+    }
+
+    mod column_count {
+        use super::*;
+
+        mod ok {
+            use super::*;
+
+            #[test]
+            fn exact() {
+                let mappings = vec![
+                    FieldMap::One {
+                        name: "a".to_string(),
+                    },
+                    FieldMap::Some {
+                        name: "b".to_string(),
+                        colspan: 2,
+                    },
+                ];
+                assert_eq!(check_columns_count(&mappings, 3), Ok(()));
+            }
+
+            #[test]
+            fn greedy() {
+                let mappings = vec![
+                    FieldMap::One {
+                        name: "a".to_string(),
+                    },
+                    FieldMap::Greedy {
+                        name: "b".to_string(),
+                    },
+                ];
+                assert_eq!(check_columns_count(&mappings, 5), Ok(()));
+            }
+
+            #[test]
+            fn greedy_exact() {
+                let mappings = vec![
+                    FieldMap::One {
+                        name: "a".to_string(),
+                    },
+                    FieldMap::Greedy {
+                        name: "b".to_string(),
+                    },
+                ];
+                assert_eq!(check_columns_count(&mappings, 1), Ok(()));
+            }
+        }
+
+        mod error {
+            use super::*;
+            const USIZE_MAX_HALF: usize = usize::MAX / 2;
+
+            #[test]
+            fn too_few() {
+                let mappings = vec![
+                    FieldMap::One {
+                        name: "a".to_string(),
+                    },
+                    FieldMap::Some {
+                        name: "b".to_string(),
+                        colspan: 2,
+                    },
+                ];
+                assert_eq!(
+                    check_columns_count(&mappings, 2),
+                    Err(CheckColumnsCountError::NotExact {
+                        expected: 3,
+                        actual: 2,
+                    })
+                );
+            }
+
+            #[test]
+            fn too_many() {
+                let mappings = vec![
+                    FieldMap::One {
+                        name: "a".to_string(),
+                    },
+                    FieldMap::Some {
+                        name: "b".to_string(),
+                        colspan: 2,
+                    },
+                ];
+                assert_eq!(
+                    check_columns_count(&mappings, 4),
+                    Err(CheckColumnsCountError::NotExact {
+                        expected: 3,
+                        actual: 4,
+                    })
+                );
+            }
+
+            #[test]
+            fn greedy_too_few() {
+                let mappings = vec![
+                    FieldMap::One {
+                        name: "a".to_string(),
+                    },
+                    FieldMap::One {
+                        name: "b".to_string(),
+                    },
+                    FieldMap::Greedy {
+                        name: "c".to_string(),
+                    },
+                ];
+                assert_eq!(
+                    check_columns_count(&mappings, 1),
+                    Err(CheckColumnsCountError::NotAtLeast { min: 2, actual: 1 })
+                );
+            }
+
+            #[test]
+            fn colspan_too_large() {
+                let mappings = vec![
+                    FieldMap::Some {
+                        name: "a".to_string(),
+                        colspan: USIZE_MAX_HALF,
+                    },
+                    FieldMap::Some {
+                        name: "b".to_string(),
+                        colspan: USIZE_MAX_HALF,
+                    },
+                    FieldMap::Some {
+                        name: "c".to_string(),
+                        colspan: USIZE_MAX_HALF,
+                    },
+                ];
+                assert_eq!(
+                    check_columns_count(&mappings, 0),
+                    Err(CheckColumnsCountError::ColspanBiggerThanUsizeMax)
+                );
+            }
+        }
+    }
 }

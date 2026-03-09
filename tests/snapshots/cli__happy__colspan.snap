@@ -1,0 +1,12 @@
+---
+source: tests/cli.rs
+expression: "common::run_grab(&[\"--mapping\", \"a:2,first_name,last_name,b:8\", \"--skip\", \"1\",\n\"--select\", \"first_name,last_name\", \"--json\",],\ncommon::StreamSource::File(\"tests/fixtures/many_columns.csv\"),)"
+---
+stdout:
+{"first_name":"Pam","last_name":"Sparks"}
+{"first_name":"Gina","last_name":"Rocha"}
+{"first_name":"Kristie","last_name":"Greer"}
+{"first_name":"Arthur","last_name":"Fields"}
+{"first_name":"Michelle","last_name":"Blevins"}
+
+stderr:

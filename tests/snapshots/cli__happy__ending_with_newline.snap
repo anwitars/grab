@@ -1,0 +1,9 @@
+---
+source: tests/cli.rs
+expression: "common::run_grab(&[\"--mapping\", \"name,age,email\", \"--skip\", \"1\", \"--json\"],\ncommon::StreamSource::File(\"tests/fixtures/simple_newline.csv\"),)"
+---
+stdout:
+{"name":"Alice","age":"34","email":"alice@email.com"}
+{"name":"Fred","age":"29","email":"fred@email.com"}
+
+stderr:
