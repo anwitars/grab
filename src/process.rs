@@ -301,34 +301,6 @@ fn serialize_json_field(
 mod tests {
     use super::*;
 
-    mod json {
-        use super::*;
-
-        #[test]
-        fn serialize_value() -> AnyResult<()> {
-            let mut output = Vec::new();
-            serialize_json_value(&mut output, "test")?;
-            assert_eq!(String::from_utf8(output).unwrap(), r#""test""#);
-            Ok(())
-        }
-
-        #[test]
-        fn serialize_array() -> AnyResult<()> {
-            let mut output = Vec::new();
-            serialize_json_array(&mut output, &mut ["value1", "value2"].into_iter())?;
-            assert_eq!(String::from_utf8(output).unwrap(), r#"["value1","value2"]"#);
-            Ok(())
-        }
-
-        #[test]
-        fn serialize_field() -> AnyResult<()> {
-            let mut output = Vec::new();
-            serialize_json_field(&mut output, "name", "value")?;
-            assert_eq!(String::from_utf8(output).unwrap(), r#""name":"value""#);
-            Ok(())
-        }
-    }
-
     mod columns {
         use super::*;
 
@@ -428,6 +400,88 @@ mod tests {
                     result,
                     Err(CheckColumnsCountError::NotAtLeast { min: 3, actual: 2 })
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    mod calculate_columns {
+        use super::*;
+
+        prop_compose! {
+            fn arbitrary_fieldmap()(
+                kind in 0u8..3u8,
+                colspan in 1..usize::MAX,
+                name in ".*"
+            ) -> FieldMap {
+                match kind {
+                    0 => FieldMap::One { name },
+                    1 => FieldMap::Some { name, colspan },
+                    _ => FieldMap::Greedy { name },
+                }
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn never_panics(mappings in prop::collection::vec(arbitrary_fieldmap(), 1..100)) {
+                let result = calculate_expected_columns_count(&mappings);
+
+                // We expect this function to never panic, even if it returns an error for overflow cases
+                prop_assert!(result.is_ok() || matches!(result, Err(CalculateExpectedColumnsCountError::ColspanBiggerThanUsizeMax)));
+            }
+        }
+    }
+
+    mod json {
+        use super::*;
+
+        proptest! {
+            #[test]
+            fn serialize_value(value in ".*") {
+                let mut output = Vec::new();
+
+                let result = serialize_json_value(&mut output, &value);
+                prop_assert!(result.is_ok());
+
+                let expected: serde_json::Value = serde_json::from_slice(&output).unwrap();
+                prop_assert_eq!(expected, serde_json::Value::String(value));
+            }
+
+            #[test]
+            fn serialize_array(values in prop::collection::vec(".*", 0..100)) {
+                let mut output = Vec::new();
+                let result = serialize_json_array(&mut output, &mut values.iter());
+                prop_assert!(result.is_ok());
+
+                let expected: serde_json::Value = serde_json::from_slice(&output).unwrap();
+                prop_assert_eq!(
+                    expected,
+                    serde_json::Value::Array(
+                        values
+                            .iter()
+                            .map(|v| serde_json::Value::String(v.clone()))
+                            .collect()
+                    )
+                );
+            }
+
+            #[test]
+            fn serialize_field(name in ".*", value in ".*") {
+                let mut output = Vec::new();
+                let result = serialize_json_field(&mut output, &name, &value);
+                prop_assert!(result.is_ok());
+
+                let json_str = format!("{{{}}}", String::from_utf8(output).unwrap());
+                let parsed: serde_json::Value = serde_json::from_str(json_str.as_str()).unwrap();
+
+                let expected = serde_json::json!({ name: value });
+                prop_assert_eq!(parsed, expected);
             }
         }
     }
