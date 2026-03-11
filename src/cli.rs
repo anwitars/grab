@@ -1,5 +1,7 @@
 use clap::Parser;
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
+
+const DEFAULT_WRITER_BUFFER_SIZE: WriterBufferSize = WriterBufferSize(64 * 1024); // 64KB
 
 #[derive(Debug, Parser)]
 #[clap(
@@ -46,12 +48,8 @@ pub struct Cli {
     #[clap(long)]
     pub take: Option<usize>,
 
-    /// By default, the tool will error if the number of input fields does not match the mapping.
-    /// This flag allows for more lenient parsing, simply not caring about extra or missing fields.
-    /// When enabled, it might result in extra fields being ignored or missing fields being filled with empty strings,
-    /// depending on the mapping configuration.
-    /// Use only if the input data is known to be inconsistent and you want to extract whatever can be extracted without
-    /// strict validation.
+    /// Enable lenient mode: disables column count validation. Extra fields are ignored; missing fields default to empty
+    /// strings.
     #[clap(long)]
     pub loose: bool,
 
@@ -70,4 +68,72 @@ pub struct Cli {
     /// Output results in JSON format instead of delimited text. Conflicts with output-delimiter option.
     #[clap(long)]
     pub json: bool,
+
+    /// Set the buffer size for the output writer in bytes.
+    #[clap(short, long, default_value_t = DEFAULT_WRITER_BUFFER_SIZE)]
+    pub buffer: WriterBufferSize,
+}
+
+/// Wrapper type for writer buffer size to allow parsing from command-line arguments.
+/// Example format: "512K", "128B", "1M". Supports suffixes B, K, M for bytes, kilobytes, and megabytes respectively.
+#[derive(Debug, Clone)]
+pub struct WriterBufferSize(usize);
+
+impl WriterBufferSize {
+    pub fn size(&self) -> usize {
+        self.0
+    }
+}
+
+impl FromStr for WriterBufferSize {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim().to_lowercase();
+        if s.is_empty() {
+            return Err("Buffer size cannot be empty".into());
+        }
+
+        // Check the last character for the unit
+        let last_char = s.chars().last().unwrap();
+        let multiplier = match last_char {
+            'b' => 1,
+            'k' => 1024,
+            'm' => 1024 * 1024,
+            'g' => 1024 * 1024 * 1024, // Might as well add G!
+            '0'..='9' => 1,            // Default to bytes if it's a number
+            _ => {
+                return Err(format!(
+                    "Invalid suffix '{}'. Use b, k, m, or g.",
+                    last_char
+                ));
+            }
+        };
+
+        let number_part = if last_char.is_alphabetic() {
+            &s[..s.len() - 1]
+        } else {
+            &s
+        };
+
+        let number: usize = number_part
+            .trim()
+            .parse()
+            .map_err(|_| format!("'{}' is not a valid number", number_part))?;
+
+        Ok(WriterBufferSize(number * multiplier))
+    }
+}
+
+impl std::fmt::Display for WriterBufferSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let size = self.0;
+        if size >= 1024 * 1024 {
+            write!(f, "{}M", size / (1024 * 1024))
+        } else if size >= 1024 {
+            write!(f, "{}K", size / 1024)
+        } else {
+            write!(f, "{}B", size)
+        }
+    }
 }

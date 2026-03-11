@@ -21,10 +21,11 @@ fn main() -> AnyResult<()> {
         StreamSource::Stdin(std::io::stdin().lock())
     };
 
+    let buffer_size: usize = cli.buffer.size();
     let settings = AppOptions::try_from(cli)?;
     settings.validate()?;
 
-    let mut writer = BufWriter::new(std::io::stdout());
+    let mut writer = BufWriter::with_capacity(buffer_size, std::io::stdout());
     match source {
         StreamSource::Stdin(mut stdin) => process(&mut stdin, &mut writer, &settings)?,
         StreamSource::File(mut file) => process(&mut file, &mut writer, &settings)?,
