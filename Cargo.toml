@@ -2,6 +2,12 @@
 name = "grab-cli"
 version = "0.1.0"
 edition = "2024"
+authors = ["anwitars <anwitarsbusiness@gmail.com>"]
+description = "A high-performance, declarative stream processor for delimited text data."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/anwitars/grab"
+keywords = ["csv", "json", "cli", "stream", "parser"]
+categories = ["command-line-utilities", "parsing"]
 
 [[bin]]
 name = "grab"
