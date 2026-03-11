@@ -53,11 +53,13 @@ impl<'a> FieldWriter<'a> for FieldMap {
                     writer.write_all(b":")?;
                     serialize_json_array(writer, &mut fields)?;
                 } else {
-                    for (i, value) in fields.enumerate() {
-                        if i > 0 {
+                    let mut is_first = true;
+                    for value in fields {
+                        if !is_first {
                             writer.write_all(app_options.output_greedy_delimiter.as_bytes())?;
                         }
                         writer.write_all(value.as_bytes())?;
+                        is_first = false;
                     }
                 }
             }
@@ -67,14 +69,16 @@ impl<'a> FieldWriter<'a> for FieldMap {
                     writer.write_all(b":")?;
                     serialize_json_array(writer, fields)?;
                 } else {
-                    for i in 0.. {
-                        if i > 0 {
+                    let mut is_first = true;
+                    loop {
+                        if !is_first {
                             writer.write_all(app_options.output_greedy_delimiter.as_bytes())?;
                         }
                         match fields.next() {
                             Some(value) => writer.write_all(value.as_bytes())?,
                             None => break,
                         }
+                        is_first = false;
                     }
                 }
             }
@@ -269,10 +273,12 @@ fn serialize_json_array(
     // and since serializing the array is just writing the values with commas in between,
     // we can do that manually without any overhead
     writer.write_all(b"[")?;
-    for (i, value) in values.enumerate() {
-        if i > 0 {
+    let mut is_first = true;
+    for value in values {
+        if !is_first {
             writer.write_all(b",")?;
         }
+        is_first = false;
         serialize_json_value(writer, value)?;
     }
     writer.write_all(b"]")?;
