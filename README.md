@@ -4,6 +4,28 @@
 
 It is designed to replace fragile shell pipelines (`awk`, `cut`, `sed`) with a structured approach for data extraction and manipulation. Instead of relying on complex, column-based syntax, `grab` allows you to define your data schema upfront: turning messy, brittle pipelines into readable, maintainable, and verifiable data flows.
 
+## Key Features
+- **High Performance:** Process ~12.8M fields/sec (often limited only by system pipe throughput).
+- **Safety First:** Strict UTF-8 validation and schema enforcement by default.
+- **JQ's Best Friend:** Transform messy delimited text into structured JSON ingress for `jq`.
+- **Zero Dependencies:** Single static binary (~800KB). No libc requirements (musl).
+
+## Quick Start
+
+To create JSON objects from a CSV file, you can use the following command:
+
+```bash
+# users.csv:
+# 1,John,Doe,555-1234,555-5678,London,UK
+# 2,Jane,Smith,555-8765,555-4321,New York,USA
+
+grab --mapping id,_,last,phones:2,_:g --json < users.csv
+
+# Output:
+# {"id":"1","last":"Doe","phones":["555-1234","555-5678"]}
+# {"id":"2","last":"Smith","phones":["555-8765","555-4321"]}
+```
+
 ## The UNIX Philosophy
 
 `grab` is built to be a first-class citizen in the UNIX ecosystem. It adheres strictly to the principles of modularity and composability:
@@ -29,28 +51,13 @@ It is designed to replace fragile shell pipelines (`awk`, `cut`, `sed`) with a s
 | `phones:N` | Maps the next `N` input columns to an array field `phones` |
 | `data:g` | Maps the rest of the input columns to an array field `data` |
 
-## Quick Start
-
-To create JSON objects from a CSV file, you can use the following command:
-
-```bash
-# users.csv:
-# 1,John,Doe,555-1234,555-5678,London,UK
-# 2,Jane,Smith,555-8765,555-4321,New York,USA
-
-grab --mapping id,_,last,phones:2,_:g --json < users.csv
-
-# Output:
-# {"id":"1","last":"Doe","phones":["555-1234","555-5678"]}
-# {"id":"2","last":"Smith","phones":["555-8765","555-4321"]}
-```
-
 ## Pipeline Integration
 
-Filter for UK users and extract their IDs
+`grab` excels at preparing data for specialized JSON tools. Instead of writing complex `jq` logic to handle raw strings, use `grab` to create a clean schema first:
 
 ```bash
-grep ",UK" users.csv | grab --mapping id,_:g --json | jq -r '.[].id'
+# Extract IDs and Countries, then use jq to filter and format
+grab -m "id,_:5,country,_:g" -d ',' --json < users.csv | jq -r 'select(.country == "UK") | .id'
 ```
 
 ## Performance
