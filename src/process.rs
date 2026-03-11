@@ -181,7 +181,7 @@ fn process_record(
             }
             is_first = false;
 
-            mapping.write_field(writer, &settings, fields_iterator.by_ref())?;
+            mapping.write_field(writer, settings, fields_iterator.by_ref())?;
         } else {
             mapping.consume_fields(fields_iterator.by_ref());
         }
