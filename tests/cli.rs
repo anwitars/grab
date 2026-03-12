@@ -104,6 +104,22 @@ mod happy {
             StreamSource::File("tests/fixtures/simple.csv"),
         ))
     }
+
+    #[test]
+    fn test_whitespace() {
+        insta::assert_snapshot!(run_grab(
+            &[
+                "--delimiter",
+                "whitespace",
+                "--mapping",
+                "name,age,email",
+                "--skip",
+                "1",
+                "--json"
+            ],
+            StreamSource::File("tests/fixtures/whitespace.csv"),
+        ))
+    }
 }
 
 mod unhappy {

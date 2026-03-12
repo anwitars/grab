@@ -1,6 +1,8 @@
 use clap::Parser;
 use std::{path::PathBuf, str::FromStr};
 
+use crate::types::Delimiter;
+
 const DEFAULT_WRITER_BUFFER_SIZE: WriterBufferSize = WriterBufferSize(64 * 1024); // 64KB
 
 #[derive(Debug, Parser)]
@@ -55,7 +57,7 @@ pub struct Cli {
 
     /// Delimiter used to split the input fields.
     #[clap(short, long, default_value = ",")]
-    pub delimiter: String,
+    pub delimiter: Delimiter,
 
     /// Delimiter used to join the output fields. Ignored if JSON output is enabled.
     #[clap(short, long, default_value = ",", conflicts_with = "json")]

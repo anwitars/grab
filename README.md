@@ -26,6 +26,12 @@ grab --mapping id,_,last,phones:2,_:g --json < users.csv
 # {"id":"2","last":"Smith","phones":["555-8765","555-4321"]}
 ```
 
+Or see processes consuming more than 5% memory:
+
+```bash
+ps aux | ./grab --delimiter whitespace --mapping _,pid,_,mem,_:6,command:gj --json --skip 1 | jq -r 'select(.mem | tonumber > 5)'
+```
+
 ## The UNIX Philosophy
 
 `grab` is built to be a first-class citizen in the UNIX ecosystem. It adheres strictly to the principles of modularity and composability:

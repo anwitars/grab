@@ -1,4 +1,6 @@
 use crate::{
+    error::report_error,
+    fields::tokenizer::FieldTokenizer,
     options::{AppOptions, FieldMap},
     try_report,
     types::AnyResult,
@@ -12,6 +14,14 @@ pub enum StreamSource {
     File(BufReader<std::fs::File>),
 }
 
+impl StreamSource {
+    pub fn reader(self) -> Box<dyn Read> {
+        match self {
+            StreamSource::Stdin(stdin) => Box::new(stdin),
+            StreamSource::File(file) => Box::new(file),
+        }
+    }
+}
 /// A trait that defines how to write fields to the output based on the mapping configuration.
 trait FieldWriter<'a> {
     /// Writes the specified fields to the output according to the provided settings.
@@ -103,40 +113,33 @@ impl<'a> FieldWriter<'a> for FieldMap {
 }
 
 /// Processes the input line by line according to the provided settings and outputs the results.
-pub fn process<R: Read, W: Write>(
-    reader: &mut R,
+pub fn process<W: Write>(
+    tokenizer: &mut dyn FieldTokenizer,
     writer: &mut W,
     settings: &AppOptions,
 ) -> AnyResult<()> {
     let selected_mappings = settings.selected_mappings();
     let expected_columns_count = calculate_expected_columns_count(&settings.mapping)?;
 
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .buffer_capacity(64 * 1024)
-        .delimiter(
-            *settings
-                .delimiter
-                .as_bytes()
-                .first()
-                .ok_or("Delimiter cannot be empty")?,
-        )
-        .from_reader(reader);
-
-    for (line_number, record) in reader
-        .records()
-        // skip the specified number of lines if the skip option is set
-        .skip(settings.skip.unwrap_or(0))
-        // take only the specified number of lines if the take option is set
-        .take(settings.take.unwrap_or(usize::MAX))
-        .enumerate()
+    let mut line_number = 1;
+    while tokenizer
+        .next_record()
+        .map_err(|e| report_error(e.to_string(), line_number))
+        .unwrap_or(false)
     {
-        let line_number = line_number + 1; // Line numbers are 1-based for user-friendly error reporting
-        let line_number = line_number + settings.skip.unwrap_or(0); // Adjust line number based on skipped lines
-        let record = try_report!(record, line_number);
+        if line_number < settings.skip.unwrap_or(0) + 1 {
+            line_number += 1;
+            continue;
+        } else if let Some(take) = settings.take {
+            if line_number > settings.skip.unwrap_or(0) + take {
+                break;
+            }
+        }
+
+        let fields = tokenizer.fields();
         try_report!(
             process_record(
-                record,
+                fields,
                 writer,
                 settings,
                 &selected_mappings,
@@ -144,22 +147,56 @@ pub fn process<R: Read, W: Write>(
             ),
             line_number
         );
+        line_number += 1;
     }
+
+    // let mut reader = csv::ReaderBuilder::new()
+    //     .has_headers(false)
+    //     .buffer_capacity(64 * 1024)
+    //     .delimiter(
+    //         *settings
+    //             .delimiter
+    //             .as_bytes()
+    //             .first()
+    //             .ok_or("Delimiter cannot be empty")?,
+    //     )
+    //     .from_reader(reader);
+
+    // for (line_number, record) in reader
+    //     .records()
+    //     // skip the specified number of lines if the skip option is set
+    //     .skip(settings.skip.unwrap_or(0))
+    //     // take only the specified number of lines if the take option is set
+    //     .take(settings.take.unwrap_or(usize::MAX))
+    //     .enumerate()
+    // {
+    //     let line_number = line_number + 1; // Line numbers are 1-based for user-friendly error reporting
+    //     let line_number = line_number + settings.skip.unwrap_or(0); // Adjust line number based on skipped lines
+    //     let record = try_report!(record, line_number);
+    //     try_report!(
+    //         process_record(
+    //             record,
+    //             writer,
+    //             settings,
+    //             &selected_mappings,
+    //             &expected_columns_count
+    //         ),
+    //         line_number
+    //     );
+    // }
 
     Ok(())
 }
 
 fn process_record(
-    record: csv::StringRecord,
+    fields: &[&str],
     writer: &mut impl Write,
     settings: &AppOptions,
     mappings: &[(&FieldMap, bool)],
     expected_columns_count: &ExpectedColumnsCount,
 ) -> AnyResult<()> {
-    let fields = record.into_iter();
-
     if !settings.loose {
-        check_columns_count(expected_columns_count, record.len())?;
+        check_columns_count(expected_columns_count, fields.len())?;
     }
 
     if settings.json {
@@ -167,7 +204,7 @@ fn process_record(
     }
 
     // let's use an iterator to process the fields according to the mapping, and consume columns as we go
-    let mut fields_iterator = fields.into_iter();
+    let mut fields_iterator = fields.iter().copied();
     let mut is_first = true;
 
     for (mapping, is_selected) in mappings.iter() {

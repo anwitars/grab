@@ -1,3 +1,4 @@
+use crate::fields::tokenizer::{CsvFieldTokenizer, FieldTokenizer, WhitespaceFieldTokenizer};
 use crate::options::AppOptions;
 use crate::process::{StreamSource, process};
 use crate::types::AnyResult;
@@ -7,6 +8,7 @@ use std::io::{BufReader, BufWriter};
 
 mod cli;
 mod error;
+mod fields;
 mod options;
 mod process;
 mod types;
@@ -26,10 +28,17 @@ fn main() -> AnyResult<()> {
     settings.validate()?;
 
     let mut writer = BufWriter::with_capacity(buffer_size, std::io::stdout());
-    match source {
-        StreamSource::Stdin(mut stdin) => process(&mut stdin, &mut writer, &settings)?,
-        StreamSource::File(mut file) => process(&mut file, &mut writer, &settings)?,
-    }
+
+    let mut reader: Box<dyn FieldTokenizer> = match settings.delimiter {
+        crate::types::Delimiter::Whitespace => {
+            Box::new(WhitespaceFieldTokenizer::new(source.reader()))
+        }
+        crate::types::Delimiter::Character(delimiter) => {
+            Box::new(CsvFieldTokenizer::new(source.reader(), delimiter))
+        }
+    };
+
+    process(&mut *reader, &mut writer, &settings)?;
 
     Ok(())
 }

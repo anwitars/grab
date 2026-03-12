@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use crate::cli::Cli;
+use crate::types::Delimiter;
 
 #[derive(Debug, thiserror::Error)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -109,7 +110,7 @@ pub struct AppOptions {
     pub skip: Option<usize>,
     pub take: Option<usize>,
     pub loose: bool,
-    pub delimiter: String,
+    pub delimiter: Delimiter,
     pub output_delimiter: String,
     pub output_greedy_delimiter: String,
     pub json: bool,
@@ -273,7 +274,7 @@ impl Default for AppOptions {
             skip: None,
             take: None,
             loose: false,
-            delimiter: ",".to_string(),
+            delimiter: Delimiter::Character(b','),
             json: false,
             output_delimiter: ",".to_string(),
             output_greedy_delimiter: ";".to_string(),
