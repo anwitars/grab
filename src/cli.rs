@@ -35,6 +35,9 @@ pub struct Cli {
     /// means the third column is ignored and not included in the output.
     /// Can be combined with colspan and greedy.
     /// Example output: "John,30,New York" if the input was "John,30,ignored,New York".
+    ///
+    /// 'j' can be used for colspan and greedy fields to join the array result into a single string by a space.
+    /// Example output: "John,30,123 Main St Apt 4B" for "name,age,address:2j" and input "John,30,123 Main St,Apt 4B".
     #[clap(short, long)]
     pub mapping: String,
 
@@ -56,6 +59,7 @@ pub struct Cli {
     pub loose: bool,
 
     /// Delimiter used to split the input fields.
+    /// Either a character or 'whitespace' to split on whitespace blocks.
     #[clap(short, long, default_value = ",")]
     pub delimiter: Delimiter,
 

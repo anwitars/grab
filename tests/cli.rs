@@ -120,6 +120,14 @@ mod happy {
             StreamSource::File("tests/fixtures/whitespace.csv"),
         ))
     }
+
+    #[test]
+    fn test_join() {
+        insta::assert_snapshot!(run_grab(
+            &["--mapping", "name,rest:2j", "--skip", "1", "--json"],
+            StreamSource::File("tests/fixtures/simple.csv"),
+        ))
+    }
 }
 
 mod unhappy {

@@ -28,9 +28,14 @@ trait FieldWriter<'a> {
     /// Only called when the field is selected for output.
     fn write_field(
         &self,
+        // The writer to which the output should be written.
         writer: &mut impl Write,
+        // The application options that may affect how the field is written (e.g., JSON mode, delimiters).
         app_options: &AppOptions,
+        // An iterator over the input fields for the current record.
         fields: &mut impl Iterator<Item = &'a str>,
+        // A reusable buffer that can be used to basically anything (but mostly for joining fields)
+        buffer: &mut Vec<u8>,
     ) -> AnyResult<()>;
 
     /// Consumes the specified number of fields from the input iterator, effectively skipping them.
@@ -44,6 +49,7 @@ impl<'a> FieldWriter<'a> for FieldMap {
         writer: &mut impl Write,
         app_options: &AppOptions,
         fields: &mut impl Iterator<Item = &'a str>,
+        buffer: &mut Vec<u8>,
     ) -> AnyResult<()> {
         let is_json = app_options.json;
 
@@ -56,41 +62,24 @@ impl<'a> FieldWriter<'a> for FieldMap {
                     writer.write_all(value.as_bytes())?;
                 }
             }
-            FieldMap::Some { name, colspan } => {
+            FieldMap::Array {
+                name,
+                colspan,
+                join,
+            } => {
                 let mut fields = (0..*colspan).map(|_| fields.next().unwrap_or_default());
                 if is_json {
                     serialize_json_value(writer, name)?;
                     writer.write_all(b":")?;
-                    serialize_json_array(writer, &mut fields)?;
-                } else {
-                    let mut is_first = true;
-                    for value in fields {
-                        if !is_first {
-                            writer.write_all(app_options.output_greedy_delimiter.as_bytes())?;
-                        }
-                        writer.write_all(value.as_bytes())?;
-                        is_first = false;
-                    }
                 }
+                serialize_array_like_field_map(writer, app_options, &mut fields, buffer, *join)?;
             }
-            FieldMap::Greedy { name } => {
+            FieldMap::Greedy { name, join } => {
                 if is_json {
                     serialize_json_value(writer, name)?;
                     writer.write_all(b":")?;
-                    serialize_json_array(writer, fields)?;
-                } else {
-                    let mut is_first = true;
-                    loop {
-                        if !is_first {
-                            writer.write_all(app_options.output_greedy_delimiter.as_bytes())?;
-                        }
-                        match fields.next() {
-                            Some(value) => writer.write_all(value.as_bytes())?,
-                            None => break,
-                        }
-                        is_first = false;
-                    }
                 }
+                serialize_array_like_field_map(writer, app_options, fields, buffer, *join)?;
             }
         }
 
@@ -102,7 +91,7 @@ impl<'a> FieldWriter<'a> for FieldMap {
             FieldMap::One { .. } => {
                 let _ = fields.next();
             }
-            FieldMap::Some { colspan, .. } => {
+            FieldMap::Array { colspan, .. } => {
                 for _ in 0..*colspan {
                     let _ = fields.next();
                 }
@@ -110,6 +99,48 @@ impl<'a> FieldWriter<'a> for FieldMap {
             FieldMap::Greedy { .. } => for _ in fields {},
         }
     }
+}
+
+/// Helper function to share the same serialization logic for both Array and Greedy field mappings.
+fn serialize_array_like_field_map<'a>(
+    writer: &mut impl Write,
+    app_options: &AppOptions,
+    fields: &mut impl Iterator<Item = &'a str>,
+    buffer: &mut Vec<u8>,
+    join: bool,
+) -> AnyResult<()> {
+    let is_json = app_options.json;
+
+    if is_json {
+        if join {
+            buffer.clear();
+            let mut is_first = true;
+            for value in fields {
+                if !is_first {
+                    buffer.push(b' ');
+                }
+                buffer.extend_from_slice(value.as_bytes());
+                is_first = false;
+            }
+            let joined = std::str::from_utf8(buffer).unwrap_or_default();
+
+            serialize_json_value(writer, joined)?;
+        } else {
+            serialize_json_array(writer, fields)?;
+        }
+    } else {
+        let mut is_first = true;
+        for value in fields {
+            if !is_first {
+                let delimiter = app_options.output_greedy_delimiter.as_bytes()[0];
+                writer.write_all(&[delimiter])?;
+            }
+            writer.write_all(value.as_bytes())?;
+            is_first = false;
+        }
+    }
+
+    Ok(())
 }
 
 /// Processes the input line by line according to the provided settings and outputs the results.
@@ -120,6 +151,9 @@ pub fn process<W: Write>(
 ) -> AnyResult<()> {
     let selected_mappings = settings.selected_mappings();
     let expected_columns_count = calculate_expected_columns_count(&settings.mapping)?;
+
+    // Buffer to be reused for joining fields in Array and Greedy mappings, to avoid allocating a new buffer for each record.
+    let mut buffer = Vec::with_capacity(1024);
 
     let mut line_number = 1;
     while tokenizer
@@ -143,6 +177,7 @@ pub fn process<W: Write>(
                 writer,
                 settings,
                 &selected_mappings,
+                &mut buffer,
                 &expected_columns_count
             ),
             line_number
@@ -193,6 +228,7 @@ fn process_record(
     writer: &mut impl Write,
     settings: &AppOptions,
     mappings: &[(&FieldMap, bool)],
+    buffer: &mut Vec<u8>,
     expected_columns_count: &ExpectedColumnsCount,
 ) -> AnyResult<()> {
     if !settings.loose {
@@ -218,7 +254,7 @@ fn process_record(
             }
             is_first = false;
 
-            mapping.write_field(writer, settings, fields_iterator.by_ref())?;
+            mapping.write_field(writer, settings, fields_iterator.by_ref(), buffer)?;
         } else {
             mapping.consume_fields(fields_iterator.by_ref());
         }
@@ -267,7 +303,7 @@ fn calculate_expected_columns_count(
                     .checked_add(1)
                     .ok_or(CalculateExpectedColumnsCountError::ColspanBiggerThanUsizeMax)?
             }
-            FieldMap::Some { colspan, .. } => {
+            FieldMap::Array { colspan, .. } => {
                 count = count
                     .checked_add(*colspan)
                     .ok_or(CalculateExpectedColumnsCountError::ColspanBiggerThanUsizeMax)?
@@ -357,9 +393,10 @@ mod tests {
                     FieldMap::One {
                         name: "field1".to_string(),
                     },
-                    FieldMap::Some {
+                    FieldMap::Array {
                         name: "field2".to_string(),
                         colspan: 2,
+                        join: false,
                     },
                 ];
                 let expected = calculate_expected_columns_count(&mappings)?;
@@ -373,12 +410,14 @@ mod tests {
                     FieldMap::One {
                         name: "field1".to_string(),
                     },
-                    FieldMap::Some {
+                    FieldMap::Array {
                         name: "field2".to_string(),
                         colspan: 2,
+                        join: false,
                     },
                     FieldMap::Greedy {
                         name: "field3".to_string(),
+                        join: false,
                     },
                 ];
                 let expected = calculate_expected_columns_count(&mappings)?;
@@ -389,13 +428,15 @@ mod tests {
             #[test]
             fn overflow() {
                 let mappings = vec![
-                    FieldMap::Some {
+                    FieldMap::Array {
                         name: "field1".to_string(),
                         colspan: USIZE_MAX_HALF + 1,
+                        join: false,
                     },
-                    FieldMap::Some {
+                    FieldMap::Array {
                         name: "field2".to_string(),
                         colspan: USIZE_MAX_HALF + 1,
+                        join: false,
                     },
                 ];
                 let result = calculate_expected_columns_count(&mappings);
@@ -464,8 +505,8 @@ mod proptests {
             ) -> FieldMap {
                 match kind {
                     0 => FieldMap::One { name },
-                    1 => FieldMap::Some { name, colspan },
-                    _ => FieldMap::Greedy { name },
+                    1 => FieldMap::Array { name, colspan, join: false },
+                    _ => FieldMap::Greedy { name, join: false },
                 }
             }
         }

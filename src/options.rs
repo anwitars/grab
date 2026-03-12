@@ -1,8 +1,17 @@
+use std::cell::LazyCell;
 use std::collections::HashSet;
 use std::str::FromStr;
 
 use crate::cli::Cli;
 use crate::types::Delimiter;
+
+//g[j]
+const GREEDY_FIELD_REGEX: LazyCell<regex::Regex> =
+    LazyCell::new(|| regex::Regex::new(r"^g(j)?$").unwrap());
+
+//<number>[j]
+const ARRAY_FIELD_REGEX: LazyCell<regex::Regex> =
+    LazyCell::new(|| regex::Regex::new(r"^(\d+)(j)?$").unwrap());
 
 #[derive(Debug, thiserror::Error)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -51,19 +60,37 @@ pub enum AppOptionsValidationError {
 pub enum FieldMap {
     /// Maps all remaining input fields to a single output field, joining them with the greedy delimiter.
     /// Can only be used as the last mapping in the list.
-    Greedy { name: String },
+    Greedy {
+        /// Name of the output field.
+        name: String,
+
+        /// Indicates whether to join the gathered fields as one string.
+        join: bool,
+    },
     /// Maps multiple input fields to a single output field, with a specified colspan.
-    Some { name: String, colspan: usize },
+    Array {
+        /// Name of the output field.
+        name: String,
+
+        /// Number of input fields to map to this output field.
+        colspan: usize,
+
+        /// Indicates whether to join the gathered fields as one string.
+        join: bool,
+    },
     /// Maps a single input field to an output field.
-    One { name: String },
+    One {
+        /// Name of the output field.
+        name: String,
+    },
 }
 
 impl FieldMap {
     pub fn name(&self) -> &str {
         match self {
-            FieldMap::Greedy { name } | FieldMap::Some { name, .. } | FieldMap::One { name } => {
-                name
-            }
+            FieldMap::Greedy { name, .. }
+            | FieldMap::Array { name, .. }
+            | FieldMap::One { name } => name,
         }
     }
 
@@ -83,18 +110,30 @@ impl FromStr for FieldMap {
             }),
             2 => {
                 let name = parts[0].trim().to_string();
-                let span_part = parts[1].trim();
+                let span_part = parts[1].trim().to_lowercase();
 
-                if span_part == "g" {
-                    Ok(FieldMap::Greedy { name })
+                if let Some(caps) = GREEDY_FIELD_REGEX.captures(&span_part) {
+                    let join = caps.get(1).is_some();
+
+                    Ok(FieldMap::Greedy { name, join })
+                } else if let Some(caps) = ARRAY_FIELD_REGEX.captures(&span_part) {
+                    let colspan_str = caps.get(1).unwrap().as_str();
+                    let colspan =
+                        colspan_str
+                            .parse()
+                            .map_err(|e| FieldMapParseError::InvalidColspan {
+                                mapping: value.to_string(),
+                                source: e,
+                            })?;
+                    let join = caps.get(2).is_some();
+
+                    Ok(FieldMap::Array {
+                        name,
+                        colspan,
+                        join,
+                    })
                 } else {
-                    let colspan = span_part.parse::<usize>().map_err(|e| {
-                        FieldMapParseError::InvalidColspan {
-                            mapping: span_part.to_string(),
-                            source: e,
-                        }
-                    })?;
-                    Ok(FieldMap::Some { name, colspan })
+                    Err(FieldMapParseError::InvalidFormat(value.to_string()))
                 }
             }
             _ => Err(FieldMapParseError::InvalidFormat(value.to_string())),
@@ -138,7 +177,7 @@ impl AppOptions {
             }
 
             match m {
-                FieldMap::Some { colspan, .. } => {
+                FieldMap::Array { colspan, .. } => {
                     if *colspan == 0 {
                         return Err(AppOptionsValidationError::ColspanBelowOne(name.to_string()));
                     }

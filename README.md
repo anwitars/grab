@@ -56,6 +56,7 @@ ps aux | ./grab --delimiter whitespace --mapping _,pid,_,mem,_:6,command:gj --js
 | `_:N` | Skips the next `N` input columns |
 | `phones:N` | Maps the next `N` input columns to an array field `phones` |
 | `data:g` | Maps the rest of the input columns to an array field `data` |
+| `command:gj` | Maps the rest of the input columns into a single field `command` by joining them with spaces |
 
 ## Pipeline Integration
 
