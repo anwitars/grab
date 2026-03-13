@@ -30,9 +30,6 @@ impl<R: Read> FieldTokenizer for CsvFieldTokenizer<R> {
         self.fields.clear();
         if self.reader.read_byte_record(&mut self.byte_record)? {
             for field in self.byte_record.iter() {
-                if std::str::from_utf8(field).is_err() {
-                    return Err(format!("Invalid UTF-8 sequence in field: {:?}", field).into());
-                }
                 let slice = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(field) };
                 self.fields.push(slice);
             }

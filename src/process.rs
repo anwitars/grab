@@ -122,7 +122,7 @@ fn serialize_array_like_field_map<'a>(
                 buffer.extend_from_slice(value.as_bytes());
                 is_first = false;
             }
-            let joined = std::str::from_utf8(buffer).unwrap_or_default();
+            let joined = std::str::from_utf8(buffer)?;
 
             serialize_json_value(writer, joined)?;
         } else {
@@ -131,6 +131,7 @@ fn serialize_array_like_field_map<'a>(
     } else {
         let mut is_first = true;
         for value in fields {
+            std::str::from_utf8(buffer)?;
             if !is_first {
                 let delimiter = app_options.output_greedy_delimiter.as_bytes()[0];
                 writer.write_all(&[delimiter])?;

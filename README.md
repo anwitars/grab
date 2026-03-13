@@ -84,9 +84,9 @@ Even processing 24 million fields while validating the schema, ensuring UTF-8 co
 hyperfine --warmup 3 --runs 5 "./grab --mapping index,customer_id,first_name,last_name,company,city,country,phones:2,email,subscription_date,website --skip 1 --json < .demo/2mil.csv > /dev/null"
 
 # Results
-# Time (mean ± σ):      3.155 s ±  0.031 s    [User: 3.115 s, System: 0.038 s]
-# Range (min … max):    3.127 s …  3.196 s    5 runs
-# Throughput: 7.6 million fields/s
+# Time (mean ± σ):      2.677 s ±  0.012 s    [User: 2.631 s, System: 0.046 s]
+# Range (min … max):    2.662 s …  2.691 s    5 runs
+# Throughput: 8.9 million fields/s
 ```
 
 #### Filtering and taking a subset
@@ -97,9 +97,9 @@ When we actually start using `grab` as intended, mapping only the fields we care
 hyperfine --warmup 3 --runs 5 "./grab --mapping _:2,first_name,last_name,_:3,phones:2,email,_:g --skip 1 --json < .demo/2mil.csv > /dev/null"
 
 # Results
-# Time (mean ± σ):      1.864 s ±  0.010 s    [User: 1.835 s, System: 0.029 s]
-# Range (min … max):    1.852 s …  1.878 s    5 runs
-# Throughput: 12.8 million fields/s
+# Time (mean ± σ):      1.397 s ±  0.014 s    [User: 1.357 s, System: 0.040 s]
+# Range (min … max):    1.381 s …  1.412 s    5 runs
+# Throughput: 17.1 million fields/s
 ```
 
 #### Note
