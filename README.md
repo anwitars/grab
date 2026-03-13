@@ -5,7 +5,7 @@
 It is designed to replace fragile shell pipelines (`awk`, `cut`, `sed`) with a structured approach for data extraction and manipulation. Instead of relying on complex, column-based syntax, `grab` allows you to define your data schema upfront: turning messy, brittle pipelines into readable, maintainable, and verifiable data flows.
 
 ## Key Features
-- **High Performance:** Process ~12.8M fields/sec (often limited only by system pipe throughput).
+- **High Performance:** Process ~17.1M fields/sec (often limited only by system pipe throughput).
 - **Safety First:** Strict UTF-8 validation and schema enforcement by default.
 - **JQ's Best Friend:** Transform messy delimited text into structured JSON ingress for `jq`.
 - **Zero Dependencies:** Single static binary (~800KB). No libc requirements (musl).
@@ -110,8 +110,8 @@ While profiling, a significant portion of the execution time is spent on system 
 
 | Task | Fields/Sec | Time |
 |------|------------|------|
-| All columns with full schema validation | 7.6 million | 3.15s |
-| Partial map + greedy skip | **12.8 million** | **1.86s** |
+| All columns with full schema validation | 8.9 million | 2.68s |
+| Partial map + greedy skip | **17.1 million** | **1.4s** |
 
 ## Installation
 
