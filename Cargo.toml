@@ -1,6 +1,6 @@
 [package]
 name = "grab-cli"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["anwitars <anwitarsbusiness@gmail.com>"]
 description = "A high-performance, declarative stream processor for delimited text data."
