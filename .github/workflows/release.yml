@@ -39,7 +39,7 @@ jobs:
           asset_name: grab-linux-static-amd64
           tag: ${{ github.ref }}
           overwrite: true
-          body_path: ${{ steps.extract_notes.outputs.release_notes }}
+          body_path: release_notes.txt
 
   release-crates:
     name: Release to crates.io
